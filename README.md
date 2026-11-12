@@ -419,7 +419,7 @@ check_sql -config ./user.toml
 
 ## 测试现状
 
-当前仓库含 **62 个测试**（`advisor` / `checker` / `parser` / `report` / `sql` 五个包），覆盖 iBATIS 遗留标签解析、`<iterate>` 批量迭代、分页位参数替换，以及 `checker` 的错误消息截断（含多字节边界）、结果表 schema 预检等高风险路径。
+当前仓库含 **64 个测试**（`advisor` / `checker` / `parser` / `report` / `sql` 五个包），覆盖 iBATIS 遗留标签解析、`<iterate>` 批量迭代、分页位参数替换，以及 `checker` 的错误消息截断（含多字节边界）、结果表 schema 预检等高风险路径。
 
 相对约 3600 行 Go 代码（其中非测试代码约 2600 行），**测试覆盖仍然偏薄**，`checker` 的核心判定路径（EXPLAIN 结果归类、错误码映射）依赖实机 TiDB，尚无单测。按优先级补充：
 

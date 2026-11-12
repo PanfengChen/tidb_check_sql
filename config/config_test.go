@@ -513,3 +513,39 @@ schema = "db_a"
 		t.Fatalf("error should say the system has no name, got %v", err)
 	}
 }
+
+// TestDeclaredSystemNamedDefaultIsNotARename: the placeholder exemption keys on
+// provenance, not on the literal name, because a config may legitimately declare
+// a system called "default". Comparing names let a typo through silently.
+func TestDeclaredSystemNamedDefaultIsNotARename(t *testing.T) {
+	c := &Config{}
+	c.Database.Schema = "test"
+	c.Systems = []SystemConfig{{Name: "default", XMLDir: "./xmls/real", Schema: "real_db"}}
+
+	err := c.ApplyCLIOverrides("", 0, "", "", "", "", "typo_sys", "", "")
+	if err == nil {
+		t.Fatal("expected an error: a declared system named \"default\" must not be renamed silently")
+	}
+	if c.Systems[0].Name != "default" || c.Systems[0].XMLDir != "./xmls/real" {
+		t.Fatalf("config was mutated on error: %+v", c.Systems[0])
+	}
+}
+
+// TestDeclaredDefaultViaTOMLLoadIsAlsoProtected is the same guarantee through the
+// real loading path, where the provenance flag is set by LoadTOML.
+func TestDeclaredDefaultViaTOMLLoadIsAlsoProtected(t *testing.T) {
+	p := writeTemp(t, "real.toml", `[[check]]
+name = "default"
+xml_dir = "./xmls/real"
+schema = "real_db"
+`)
+	c, err := LoadTOML(p)
+	if err != nil {
+		t.Fatalf("LoadTOML returned %v", err)
+	}
+	c.ApplyDefaults()
+
+	if err := c.ApplyCLIOverrides("", 0, "", "", "", "", "typo", "", ""); err == nil {
+		t.Fatal("expected an error for renaming a system declared in the config file")
+	}
+}

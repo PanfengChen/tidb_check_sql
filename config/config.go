@@ -36,6 +36,13 @@ type Config struct {
 	Database DBConfig       `toml:"database"`
 	Systems  []SystemConfig `toml:"check"`
 	Output   OutputConfig   `toml:"output"`
+
+	// syntheticSystem records that Systems was filled in by ApplyDefaults
+	// rather than read from a config file. Renaming that placeholder with -sys
+	// is legitimate; renaming a declared system is a typo. Deciding by name
+	// would misfire on a config that happens to declare a system called
+	// "default".
+	syntheticSystem bool
 }
 
 // LoadTOML reads a TOML configuration file.
@@ -85,6 +92,7 @@ func (c *Config) ApplyDefaults() {
 	}
 	if len(c.Systems) == 0 {
 		c.Systems = []SystemConfig{{Name: "default", XMLDir: "."}}
+		c.syntheticSystem = true
 	}
 	c.NormalizeTableName()
 }
@@ -162,13 +170,14 @@ func (c *Config) applySystemOverrides(sys, dir, schema string) error {
 		}
 		sc := &c.Systems[0]
 		if sys != "" {
-			// The default "default" system is a placeholder, not something the
-			// user declared, so naming it is a legitimate rename. Any other
-			// mismatch is a typo: the multi-system branch rejects unknown names,
-			// and letting the single-system branch silently relabel would mean
-			// the result table's sys column disagrees with the config history.
-			placeholder := sc.Name == "default" || sc.Name == ""
-			if !placeholder && sc.Name != sys {
+			// A default-built placeholder is not something the user declared, so
+			// naming it is a legitimate rename. Naming anything else differently
+			// is a typo: the multi-system branch rejects unknown names, and a
+			// silent relabel here would make the result table's sys column
+			// disagree with the config history. This is decided by provenance,
+			// not by comparing against "default" — a config may legitimately
+			// declare a system with that name.
+			if !c.syntheticSystem && sc.Name != sys {
 				return fmt.Errorf("system %q is not declared in the config (declared: %s)",
 					sys, sc.Name)
 			}
