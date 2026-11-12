@@ -96,6 +96,12 @@ func run() int {
 	os.Args = reorderedArgs
 	flag.Parse()
 
+	// Remember which flags the user actually supplied. Defaults must not be
+	// treated as intent: passing them through to ApplyCLIOverrides overwrote
+	// every system declared in the config file.
+	explicit := map[string]bool{}
+	flag.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+
 	// Handle -version before any other work (no config/DB needed).
 	if showVersion {
 		fmt.Printf("check_sql %s\n", version)
@@ -111,14 +117,10 @@ func run() int {
 	}
 
 	// Support positional argument as xmlDir shortcut (backward compat)
+	xmlDirFromCLI := xmlDir != ""
 	if xmlDir == "" && flag.NArg() > 0 {
 		xmlDir = flag.Arg(0)
-	}
-	if xmlDir == "" {
-		xmlDir = "."
-	}
-	if sysName == "" {
-		sysName = "default"
+		xmlDirFromCLI = true
 	}
 
 	// Load configuration
@@ -130,9 +132,37 @@ func run() int {
 			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			return 1
 		}
+		// Only one system is checked per run. Saying so beats silently
+		// discarding the rest, which produced a report that looked complete
+		// while covering a fraction of the configured XML — and, because the
+		// result table is keyed by (sys, modname, sqlid), let same-named SQL
+		// from different systems overwrite each other.
+		if len(cfg.Systems) > 1 {
+			fmt.Fprintf(os.Stderr, "ERROR: %d systems configured, but only one system is checked per run.\n", len(cfg.Systems))
+			fmt.Fprintf(os.Stderr, "       Run once per system with -dir/-sys/-schema, or split the config.\n")
+			return 1
+		}
 	}
 	cfg.ApplyDefaults()
-	cfg.ApplyCLIOverrides(host, port, user, password, schema, table, sysName, xmlDir, output)
+
+	// Hand over only what the user actually typed; "" means "not specified".
+	cliSys, cliDir := "", ""
+	if explicit["sys"] {
+		cliSys = sysName
+	}
+	if xmlDirFromCLI {
+		cliDir = xmlDir
+	}
+	cfg.ApplyCLIOverrides(host, port, user, password, schema, table, cliSys, cliDir, output)
+
+	// The config's xml_dir applies only when no directory was given on the
+	// command line; a CLI path always wins.
+	if !xmlDirFromCLI && len(cfg.Systems) > 0 && cfg.Systems[0].XMLDir != "" {
+		xmlDir = cfg.Systems[0].XMLDir
+	}
+	if xmlDir == "" {
+		xmlDir = "."
+	}
 
 	// Resolve absolute XML directory path
 	absDir, err := filepath.Abs(xmlDir)

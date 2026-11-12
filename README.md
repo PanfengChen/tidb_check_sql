@@ -200,7 +200,7 @@ check_sql ./xmls/ -output terminal
 | `remark` | VARCHAR(512) | 备注 |
 | `suggestion` | TEXT | 改写建议（JSON 格式，Perl 版忽略此列） |
 
-> **升级提示**：`suggestion` 列是后加的。用旧版本建过结果表的，直接跑新版本会在 `InitTable` 里自动补这一列（内部执行 `ALTER TABLE ... ADD COLUMN suggestion TEXT`，列已存在时报 1060 并忽略）；若目标账号没有 `ALTER` 权限，需手工加列或删除旧表让它重建。
+> **升级提示**：`suggestion` 列是后加的。用旧版本建过结果表的，新版本启动时会先查 `information_schema`，**只在缺列时**执行一次 `ALTER TABLE ... ADD COLUMN suggestion TEXT`；列已存在则完全不碰 DDL，所以常规运行只需要 `SELECT/INSERT/UPDATE/CREATE`。仅当确实要从旧表升级、且账号没有 `ALTER` 权限时，需要手工加列或删除旧表重建。
 
 查询示例：
 
@@ -387,17 +387,29 @@ check_sql ./xmls/ -host <tidb_ip> -port 4000 -user root -password ''
 
 **不会。** 工具仅执行 `EXPLAIN`，不发送 `SELECT`/`INSERT`/`UPDATE`/`DELETE` 等实际执行语句。结果表 `all_sqls` 是唯一的写入目标。
 
-### Q: 如何批量检查多个系统的 XML？
+### Q: 如何检查多个系统的 XML？
 
-使用配置文件模式，TOML 中可定义多个系统：
+**当前版本每次运行只检查一个系统。** 一个系统写一份 TOML，用数组表语法声明：
 
 ```toml
-[check]
-systems = [
-  { name = "order_sys", xml_dir = "./xmls/order", schema = "order_db" },
-  { name = "user_sys",  xml_dir = "./xmls/user",  schema = "user_db" },
-]
+[[check]]
+name = "order_sys"
+xml_dir = "./xmls/order"
+schema = "order_db"
 ```
+
+然后按系统分别运行：
+
+```bash
+check_sql -config ./order.toml
+check_sql -config ./user.toml
+```
+
+> ⚠️ 两点容易踩：
+> - 不能写成 `[check]` + `systems = [...]`——该字段是数组表（`[[check]]`），写成表会让 TOML 解析直接失败。
+> - 配置文件里声明**多个** `[[check]]` 时，当前版本会明确报错退出，而不是只跑第一个（以前的版本会静默丢弃其余系统，并把所有结果记到同一个 `sys` 下，跨系统同名 SQL 会互相覆盖）。
+>
+> 命令行上的 `-sys` / `-dir` / `-schema` 优先级高于配置文件；未显式指定时以配置文件为准。
 
 ### Q: 改写建议的准确性如何保证？
 
@@ -407,7 +419,7 @@ systems = [
 
 ## 测试现状
 
-当前仓库含 **39 个测试**（`advisor` / `checker` / `parser` / `report` / `sql` 五个包），覆盖 iBATIS 遗留标签解析、`<iterate>` 批量迭代、分页位参数替换，以及 `checker` 的错误消息截断（含多字节边界）、结果表 schema 预检等高风险路径。
+当前仓库含 **54 个测试**（`advisor` / `checker` / `parser` / `report` / `sql` 五个包），覆盖 iBATIS 遗留标签解析、`<iterate>` 批量迭代、分页位参数替换，以及 `checker` 的错误消息截断（含多字节边界）、结果表 schema 预检等高风险路径。
 
 相对约 3600 行 Go 代码（其中非测试代码约 2600 行），**测试覆盖仍然偏薄**，`checker` 的核心判定路径（EXPLAIN 结果归类、错误码映射）依赖实机 TiDB，尚无单测。按优先级补充：
 

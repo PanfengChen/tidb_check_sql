@@ -19,6 +19,18 @@ type fakeDB struct {
 	queries []string
 	args    [][]driver.Value
 	execs   []string
+	// execConn records which connection handle served each exec, so tests can
+	// assert session state (USE) and the statement that depends on it share one
+	// connection. connSeq hands out those ids.
+	execConn []int
+	connSeq  int
+}
+
+func (f *fakeDB) nextConnID() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.connSeq++
+	return f.connSeq
 }
 
 func (f *fakeDB) recordQuery(q string, a []driver.NamedValue) {
@@ -32,22 +44,28 @@ func (f *fakeDB) recordQuery(q string, a []driver.NamedValue) {
 	f.args = append(f.args, vals)
 }
 
-func (f *fakeDB) recordExec(q string) {
+func (f *fakeDB) recordExec(q string, connID int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.execs = append(f.execs, q)
+	f.execConn = append(f.execConn, connID)
 }
 
 type fakeConnector struct{ db *fakeDB }
 
-func (c fakeConnector) Connect(context.Context) (driver.Conn, error) { return &fakeConn{db: c.db}, nil }
-func (c fakeConnector) Driver() driver.Driver                        { return fakeDriver{} }
+func (c fakeConnector) Connect(context.Context) (driver.Conn, error) {
+	return &fakeConn{db: c.db, id: c.db.nextConnID()}, nil
+}
+func (c fakeConnector) Driver() driver.Driver { return fakeDriver{} }
 
 type fakeDriver struct{}
 
 func (fakeDriver) Open(string) (driver.Conn, error) { return nil, io.EOF }
 
-type fakeConn struct{ db *fakeDB }
+type fakeConn struct {
+	db *fakeDB
+	id int
+}
 
 func (c *fakeConn) Prepare(string) (driver.Stmt, error) { return nil, io.EOF }
 func (c *fakeConn) Close() error                        { return nil }
@@ -59,7 +77,7 @@ func (c *fakeConn) QueryContext(_ context.Context, q string, a []driver.NamedVal
 }
 
 func (c *fakeConn) ExecContext(_ context.Context, q string, _ []driver.NamedValue) (driver.Result, error) {
-	c.db.recordExec(q)
+	c.db.recordExec(q, c.id)
 	return driver.RowsAffected(0), nil
 }
 
@@ -160,3 +178,82 @@ func TestInitTableAddsColumnWhenMissing(t *testing.T) {
 		t.Fatalf("expected ALTER adding the suggestion column, got %v", f.execs)
 	}
 }
+
+// TestExplainSQLPinsOneConnection is the regression guard for the USE/EXPLAIN
+// split: they were two separate db.Exec calls, so the pool could serve the
+// EXPLAIN from a different connection — a fresh one with no default database
+// (1046) or, in a multi-system run, one still pointing at the previous schema.
+// Both statements must now go over the same connection handle.
+func TestExplainSQLPinsOneConnection(t *testing.T) {
+	c, f := newFakeChecker(t, true)
+
+	matched, errMsg := c.ExplainSQL("order_db", "select 1 from t")
+	if matched != "T" || errMsg != "" {
+		t.Fatalf("ExplainSQL = (%q, %q), want (T, \"\")", matched, errMsg)
+	}
+
+	if len(f.execs) != 2 {
+		t.Fatalf("expected USE + EXPLAIN, got %v", f.execs)
+	}
+	if !strings.HasPrefix(strings.ToUpper(f.execs[0]), "USE ORDER_DB") {
+		t.Fatalf("first exec should switch schema, got %q", f.execs[0])
+	}
+	if !strings.HasPrefix(strings.ToUpper(f.execs[1]), "EXPLAIN") {
+		t.Fatalf("second exec should be EXPLAIN, got %q", f.execs[1])
+	}
+	if f.execConn[0] != f.execConn[1] {
+		t.Fatalf("USE and EXPLAIN ran on different connections (%d vs %d); "+
+			"session state would not apply", f.execConn[0], f.execConn[1])
+	}
+}
+
+// TestExplainSQLReissuesUseEachCall guards the other half: the pinned
+// connection is recycled, so every call must set the schema rather than rely on
+// whatever the previous call left behind.
+func TestExplainSQLReissuesUseEachCall(t *testing.T) {
+	c, f := newFakeChecker(t, true)
+
+	if matched, _ := c.ExplainSQL("schema_a", "select 1"); matched != "T" {
+		t.Fatalf("first ExplainSQL failed")
+	}
+	if matched, _ := c.ExplainSQL("schema_b", "select 2"); matched != "T" {
+		t.Fatalf("second ExplainSQL failed")
+	}
+
+	if len(f.execs) != 4 {
+		t.Fatalf("expected 2 x (USE + EXPLAIN), got %v", f.execs)
+	}
+	for _, i := range []int{0, 2} {
+		if !strings.HasPrefix(strings.ToUpper(f.execs[i]), "USE ") {
+			t.Fatalf("exec %d should be USE, got %q", i, f.execs[i])
+		}
+	}
+	if !strings.Contains(strings.ToUpper(f.execs[2]), "SCHEMA_B") {
+		t.Fatalf("second call must switch to schema_b, got %q", f.execs[2])
+	}
+}
+
+// TestExplainSQLConnectionErrorIsReported keeps the failure path honest: if no
+// connection can be acquired the row must be marked F with a message, not
+// silently passed.
+func TestExplainSQLConnectionErrorIsReported(t *testing.T) {
+	db := sql.OpenDB(errConnector{})
+	t.Cleanup(func() { db.Close() })
+	c := &Checker{db: db, config: DBConfig{Schema: "test", Table: "test.all_sqls"}}
+
+	matched, errMsg := c.ExplainSQL("test", "select 1")
+	if matched != "F" {
+		t.Fatalf("matched = %q, want F when the connection cannot be acquired", matched)
+	}
+	if errMsg == "" {
+		t.Fatal("expected a non-empty error message")
+	}
+	if len(errMsg) > 512 {
+		t.Fatalf("error message is %d bytes, must fit VARCHAR(512)", len(errMsg))
+	}
+}
+
+type errConnector struct{}
+
+func (errConnector) Connect(context.Context) (driver.Conn, error) { return nil, io.EOF }
+func (errConnector) Driver() driver.Driver                        { return fakeDriver{} }

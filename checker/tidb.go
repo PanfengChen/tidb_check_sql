@@ -1,6 +1,7 @@
 package checker
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -166,19 +167,30 @@ func (c *Checker) InsertOrUpdateSQL(sys, modname, sqlid, oldSQL string) error {
 }
 
 // ExplainSQL executes EXPLAIN on a test SQL and returns the result.
+//
+// USE is session state, so both statements are pinned to one connection.
+// Issuing them as separate db.Exec calls would let the pool hand the EXPLAIN to
+// a different connection — either a fresh one with no default database (1046
+// No database selected) or, in a multi-system run, one still pointing at the
+// previous schema. database/sql silently replaces a connection it considers
+// broken, so this is not theoretical. The connection is returned to the pool on
+// Close; the next call re-issues USE, so no state leaks between calls.
 func (c *Checker) ExplainSQL(schema, testSQL string) (matched string, errMsg string) {
-	// Switch to target schema
-	useSQL := fmt.Sprintf("USE %s", schema)
-	if _, err := c.db.Exec(useSQL); err != nil {
+	ctx := context.Background()
+	conn, err := c.db.Conn(ctx)
+	if err != nil {
+		return "F", truncateErr(fmt.Sprintf("cannot acquire connection: %s", err.Error()), 512)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("USE %s", schema)); err != nil {
 		// errmsg is VARCHAR(512) under STRICT_TRANS_TABLES: an over-long
 		// message makes the whole UPDATE fail, so the row is never written and
 		// gets re-fetched on the next run. Truncate like the EXPLAIN path.
 		return "F", truncateErr(fmt.Sprintf("cannot switch to schema %s: %s", schema, err.Error()), 512)
 	}
 
-	explainSQL := fmt.Sprintf("EXPLAIN %s", testSQL)
-	_, err := c.db.Exec(explainSQL)
-	if err != nil {
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("EXPLAIN %s", testSQL)); err != nil {
 		return "F", truncateErr(err.Error(), 512)
 	}
 	return "T", ""

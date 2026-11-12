@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -70,6 +71,23 @@ func (c *Config) ApplyDefaults() {
 	if c.Output.Format == "" {
 		c.Output.Format = "html"
 	}
+	if len(c.Systems) == 0 {
+		c.Systems = []SystemConfig{{Name: "default", XMLDir: "."}}
+	}
+	c.NormalizeTableName()
+}
+
+// NormalizeTableName makes Database.Table schema-qualified.
+//
+// Every statement the tool issues against the result table (CREATE, REPLACE,
+// UPDATE, and the information_schema probe) reads Database.Table, and the DSN
+// carries no default database — so an unqualified name such as "all_sqls"
+// fails immediately with 1046 No database selected. Qualifying once, here,
+// keeps those call sites on the same assumption instead of each guessing.
+func (c *Config) NormalizeTableName() {
+	if !strings.Contains(c.Database.Table, ".") {
+		c.Database.Table = c.Database.Schema + "." + c.Database.Table
+	}
 }
 
 // CLI overrides: command-line flags take precedence over config file values.
@@ -95,6 +113,10 @@ func (c *Config) ApplyCLIOverrides(host string, port int, user, password, schema
 	if output != "" {
 		c.Output.Format = output
 	}
+	// Only an explicitly supplied -sys/-dir replaces the system list. main used
+	// to pass the flag defaults ("default"/".") here unconditionally, which
+	// overwrote every system read from the config file with a single empty one.
+	// Callers must pass "" for a flag the user did not set.
 	if sys != "" || dir != "" {
 		sc := SystemConfig{Name: sys, XMLDir: dir, Schema: schema}
 		if sc.Name == "" {
@@ -105,4 +127,5 @@ func (c *Config) ApplyCLIOverrides(host string, port int, user, password, schema
 		}
 		c.Systems = []SystemConfig{sc}
 	}
+	c.NormalizeTableName()
 }
