@@ -667,3 +667,112 @@ func TestTableQualifiedEvenWhenOverridesFail(t *testing.T) {
 		t.Fatalf("Table = %q after a failed override, want it qualified", c.Database.Table)
 	}
 }
+
+// TestEmptyFlagsDoNotClobberConfig is the counterpart to "flags win": a flag the
+// user did not pass arrives as its zero value and must leave the config alone.
+// These branches were previously only walked indirectly, so a regression that
+// treated 0/"" as "clear this field" would not have been caught.
+func TestEmptyFlagsDoNotClobberConfig(t *testing.T) {
+	c := &Config{}
+	c.Database = DBConfig{
+		Host:     "10.0.0.1",
+		Port:     4001,
+		User:     "alice",
+		Password: "secret",
+		Schema:   "orders",
+		Table:    "orders.report",
+	}
+	c.Output.Format = "json"
+	c.Systems = []SystemConfig{{Name: "order_sys", XMLDir: "./xmls/order", Schema: "order_db"}}
+
+	// Every flag at its zero value: nothing was supplied on the command line.
+	if err := c.ApplyCLIOverrides("", 0, "", "", "", "", "", "", ""); err != nil {
+		t.Fatalf("ApplyCLIOverrides returned %v", err)
+	}
+
+	if c.Database.Host != "10.0.0.1" || c.Database.Port != 4001 {
+		t.Fatalf("connection settings clobbered: %+v", c.Database)
+	}
+	if c.Database.User != "alice" || c.Database.Password != "secret" {
+		t.Fatalf("credentials clobbered: user=%q", c.Database.User)
+	}
+	if c.Database.Schema != "orders" || c.Database.Table != "orders.report" {
+		t.Fatalf("schema/table clobbered: %+v", c.Database)
+	}
+	if c.Output.Format != "json" {
+		t.Fatalf("output format clobbered: %q", c.Output.Format)
+	}
+	if c.Systems[0].Name != "order_sys" || c.Systems[0].XMLDir != "./xmls/order" {
+		t.Fatalf("system clobbered: %+v", c.Systems[0])
+	}
+}
+
+// TestEachFlagAppliedIndividually walks the per-field branches so a mistake in
+// any single one is caught with a precise message.
+func TestEachFlagAppliedIndividually(t *testing.T) {
+	tests := []struct {
+		name   string
+		apply  func(c *Config) error
+		assert func(t *testing.T, c *Config)
+	}{
+		{
+			name:  "host",
+			apply: func(c *Config) error { return c.ApplyCLIOverrides("db.example", 0, "", "", "", "", "", "", "") },
+			assert: func(t *testing.T, c *Config) {
+				if c.Database.Host != "db.example" {
+					t.Fatalf("Host = %q", c.Database.Host)
+				}
+			},
+		},
+		{
+			name:  "port",
+			apply: func(c *Config) error { return c.ApplyCLIOverrides("", 4002, "", "", "", "", "", "", "") },
+			assert: func(t *testing.T, c *Config) {
+				if c.Database.Port != 4002 {
+					t.Fatalf("Port = %d", c.Database.Port)
+				}
+			},
+		},
+		{
+			name:  "user and password",
+			apply: func(c *Config) error { return c.ApplyCLIOverrides("", 0, "bob", "pw2", "", "", "", "", "") },
+			assert: func(t *testing.T, c *Config) {
+				if c.Database.User != "bob" || c.Database.Password != "pw2" {
+					t.Fatalf("credentials = %q/%q", c.Database.User, c.Database.Password)
+				}
+			},
+		},
+		{
+			name:  "schema",
+			apply: func(c *Config) error { return c.ApplyCLIOverrides("", 0, "", "", "newdb", "", "", "", "") },
+			assert: func(t *testing.T, c *Config) {
+				if c.Database.Schema != "newdb" {
+					t.Fatalf("Schema = %q", c.Database.Schema)
+				}
+			},
+		},
+		{
+			name:  "output",
+			apply: func(c *Config) error { return c.ApplyCLIOverrides("", 0, "", "", "", "", "", "", "csv") },
+			assert: func(t *testing.T, c *Config) {
+				if c.Output.Format != "csv" {
+					t.Fatalf("Format = %q", c.Output.Format)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Config{}
+			c.Database = DBConfig{Host: "orig", Port: 4000, User: "orig", Schema: "test", Table: "test.all_sqls"}
+			c.Output.Format = "html"
+			c.Systems = []SystemConfig{{Name: "default", XMLDir: "."}}
+
+			if err := tt.apply(c); err != nil {
+				t.Fatalf("ApplyCLIOverrides returned %v", err)
+			}
+			tt.assert(t, c)
+		})
+	}
+}
