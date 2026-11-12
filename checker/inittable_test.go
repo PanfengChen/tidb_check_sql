@@ -105,6 +105,11 @@ func newFakeChecker(t *testing.T, columnExists bool) (*Checker, *fakeDB) {
 		f.count = 1
 	}
 	db := sql.OpenDB(fakeConnector{db: f})
+	// Force a distinct connection per checkout. Without this the pool reuses
+	// one connection for serial calls, so a USE/EXPLAIN split across two
+	// db.Exec calls would also land on the same connection and the pinning
+	// tests would pass against the buggy implementation.
+	db.SetMaxIdleConns(0)
 	t.Cleanup(func() { db.Close() })
 	return &Checker{db: db, config: DBConfig{Schema: "test", Table: "test.all_sqls"}}, f
 }
@@ -230,6 +235,15 @@ func TestExplainSQLReissuesUseEachCall(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToUpper(f.execs[2]), "SCHEMA_B") {
 		t.Fatalf("second call must switch to schema_b, got %q", f.execs[2])
+	}
+	// Each call must also keep its own USE/EXPLAIN pair on one connection. The
+	// pool is forced to hand out a fresh connection per checkout, so a split
+	// implementation cannot pass by luck this time.
+	for _, pair := range [][2]int{{0, 1}, {2, 3}} {
+		if f.execConn[pair[0]] != f.execConn[pair[1]] {
+			t.Fatalf("call %d: USE and EXPLAIN ran on different connections (%d vs %d)",
+				pair[0]/2, f.execConn[pair[0]], f.execConn[pair[1]])
+		}
 	}
 }
 

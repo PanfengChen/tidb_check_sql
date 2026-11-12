@@ -85,6 +85,11 @@ func (c *Config) ApplyDefaults() {
 // fails immediately with 1046 No database selected. Qualifying once, here,
 // keeps those call sites on the same assumption instead of each guessing.
 func (c *Config) NormalizeTableName() {
+	// Guard against producing ".table": ApplyDefaults guarantees a schema, but
+	// this is exported and may be called on a partially filled Config.
+	if c.Database.Schema == "" || c.Database.Table == "" {
+		return
+	}
 	if !strings.Contains(c.Database.Table, ".") {
 		c.Database.Table = c.Database.Schema + "." + c.Database.Table
 	}
@@ -113,11 +118,27 @@ func (c *Config) ApplyCLIOverrides(host string, port int, user, password, schema
 	if output != "" {
 		c.Output.Format = output
 	}
-	// Only an explicitly supplied -sys/-dir replaces the system list. main used
-	// to pass the flag defaults ("default"/".") here unconditionally, which
-	// overwrote every system read from the config file with a single empty one.
-	// Callers must pass "" for a flag the user did not set.
-	if sys != "" || dir != "" {
+	// Only flags the user actually supplied reach here (""" means "not
+	// specified"); main must never forward flag defaults. Even so, replacing the
+	// system struct wholesale dropped every field the caller did not pass, so
+	// `-dir ./other` alone silently cleared the system's schema and sent the
+	// EXPLAINs to the wrong database.
+	switch {
+	case len(c.Systems) == 1:
+		// Merge: flags win field by field, everything else is preserved.
+		sc := &c.Systems[0]
+		if sys != "" {
+			sc.Name = sys
+		}
+		if dir != "" {
+			sc.XMLDir = dir
+		}
+		if schema != "" {
+			sc.Schema = schema
+		}
+	case sys != "" || dir != "":
+		// Several configured systems and the caller named one: the run is now
+		// about a single system built from the flags.
 		sc := SystemConfig{Name: sys, XMLDir: dir, Schema: schema}
 		if sc.Name == "" {
 			sc.Name = "default"
@@ -128,4 +149,17 @@ func (c *Config) ApplyCLIOverrides(host string, port int, user, password, schema
 		c.Systems = []SystemConfig{sc}
 	}
 	c.NormalizeTableName()
+}
+
+// ResolveTargetSchema returns the schema EXPLAIN runs against.
+//
+// Precedence: the system's own schema, then the database-level default. The two
+// can legitimately differ (a config may point the result table at one schema and
+// the checked SQL at another), which is why this is explicit rather than an
+// inline fallback.
+func ResolveTargetSchema(systemSchema, dbSchema string) string {
+	if systemSchema != "" {
+		return systemSchema
+	}
+	return dbSchema
 }

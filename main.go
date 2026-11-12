@@ -132,16 +132,6 @@ func run() int {
 			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			return 1
 		}
-		// Only one system is checked per run. Saying so beats silently
-		// discarding the rest, which produced a report that looked complete
-		// while covering a fraction of the configured XML — and, because the
-		// result table is keyed by (sys, modname, sqlid), let same-named SQL
-		// from different systems overwrite each other.
-		if len(cfg.Systems) > 1 {
-			fmt.Fprintf(os.Stderr, "ERROR: %d systems configured, but only one system is checked per run.\n", len(cfg.Systems))
-			fmt.Fprintf(os.Stderr, "       Run once per system with -dir/-sys/-schema, or split the config.\n")
-			return 1
-		}
 	}
 	cfg.ApplyDefaults()
 
@@ -154,6 +144,19 @@ func run() int {
 		cliDir = xmlDir
 	}
 	cfg.ApplyCLIOverrides(host, port, user, password, schema, table, cliSys, cliDir, output)
+
+	// Checked after the overrides: passing -sys/-dir narrows the run to one
+	// system, so it must not be rejected by a guard that ran earlier. Only a
+	// config that still declares several systems is refused. Silently using the
+	// first one produced a report that looked complete while covering a
+	// fraction of the XML, and — with the result table keyed by
+	// (sys, modname, sqlid) — let same-named SQL from different systems
+	// overwrite each other.
+	if len(cfg.Systems) > 1 {
+		fmt.Fprintf(os.Stderr, "ERROR: %d systems configured, but only one system is checked per run.\n", len(cfg.Systems))
+		fmt.Fprintf(os.Stderr, "       Split the config and run once per system, or narrow with -sys/-dir.\n")
+		return 1
+	}
 
 	// The config's xml_dir applies only when no directory was given on the
 	// command line; a CLI path always wins.
@@ -223,10 +226,7 @@ func run() int {
 		return 1
 	}
 	sys := cfg.Systems[0].Name
-	targetSchema := cfg.Database.Schema
-	if cfg.Systems[0].Schema != "" {
-		targetSchema = cfg.Systems[0].Schema
-	}
+	targetSchema := config.ResolveTargetSchema(cfg.Systems[0].Schema, cfg.Database.Schema)
 
 	insertOK, insertFail := 0, 0
 	for _, stmt := range parseResult.Statements {

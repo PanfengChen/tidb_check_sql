@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -76,7 +77,7 @@ func TestNormalizeTableName(t *testing.T) {
 		{"already qualified", "test", "test.all_sqls", "test.all_sqls"},
 		{"bare name gets the schema", "orders", "all_sqls", "orders.all_sqls"},
 		{"qualified wins over diverging schema", "test", "orders.results", "orders.results"},
-		{"empty table falls back to schema prefix", "orders", "", "orders."},
+		{"empty table is left alone", "orders", "", ""},
 	}
 
 	for _, tt := range tests {
@@ -269,5 +270,131 @@ func TestApplyDefaultsCreatesOneSystem(t *testing.T) {
 	}
 	if c.Systems[0].Name != "default" || c.Systems[0].XMLDir != "." {
 		t.Fatalf("default system = %+v", c.Systems[0])
+	}
+}
+
+// TestPartialFlagsMergeIntoSystem is the guard for the silent-wrong-database
+// bug: passing one flag used to rebuild the system struct, dropping the fields
+// the user did not repeat. `-dir ./other` alone cleared the configured schema,
+// so EXPLAIN ran against Database.Schema instead of the system's schema.
+func TestPartialFlagsMergeIntoSystem(t *testing.T) {
+	tests := []struct {
+		name       string
+		schema     string
+		sys        string
+		dir        string
+		wantName   string
+		wantDir    string
+		wantSchema string
+	}{
+		{
+			name: "dir only keeps name and schema", dir: "./other",
+			wantName: "order_sys", wantDir: "./other", wantSchema: "order_db",
+		},
+		{
+			name: "sys only keeps dir and schema", sys: "renamed",
+			wantName: "renamed", wantDir: "./xmls/order", wantSchema: "order_db",
+		},
+		{
+			name: "schema only keeps name and dir", schema: "other_db",
+			wantName: "order_sys", wantDir: "./xmls/order", wantSchema: "other_db",
+		},
+		{
+			name: "all three override", sys: "s2", dir: "./d2", schema: "db2",
+			wantName: "s2", wantDir: "./d2", wantSchema: "db2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Config{}
+			c.Database.Schema = "test"
+			c.Database.Table = "test.all_sqls"
+			c.Systems = []SystemConfig{{Name: "order_sys", XMLDir: "./xmls/order", Schema: "order_db"}}
+
+			c.ApplyCLIOverrides("", 0, "", "", tt.schema, "", tt.sys, tt.dir, "")
+
+			if len(c.Systems) != 1 {
+				t.Fatalf("got %d systems, want 1", len(c.Systems))
+			}
+			sys := c.Systems[0]
+			if sys.Name != tt.wantName || sys.XMLDir != tt.wantDir || sys.Schema != tt.wantSchema {
+				t.Fatalf("system = %+v, want {Name:%q XMLDir:%q Schema:%q}",
+					sys, tt.wantName, tt.wantDir, tt.wantSchema)
+			}
+		})
+	}
+}
+
+// TestSchemaFlagWinsForTargetSchema pins the documented precedence: a -schema on
+// the command line must beat the schema declared in the config file. Previously
+// the flag only set Database.Schema while targetSchema preferred the (unchanged)
+// system schema, so -schema had no effect at all.
+func TestSchemaFlagWinsForTargetSchema(t *testing.T) {
+	c := &Config{}
+	c.Database.Schema = "test"
+	c.Systems = []SystemConfig{{Name: "order_sys", XMLDir: "./xmls/order", Schema: "order_db"}}
+
+	c.ApplyCLIOverrides("", 0, "", "", "other_db", "", "", "", "")
+
+	if got := ResolveTargetSchema(c.Systems[0].Schema, c.Database.Schema); got != "other_db" {
+		t.Fatalf("targetSchema = %q, want other_db", got)
+	}
+}
+
+func TestResolveTargetSchema(t *testing.T) {
+	tests := []struct {
+		name         string
+		systemSchema string
+		dbSchema     string
+		want         string
+	}{
+		{"system schema wins", "order_db", "test", "order_db"},
+		{"falls back to db schema", "", "test", "test"},
+		{"both empty", "", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ResolveTargetSchema(tt.systemSchema, tt.dbSchema); got != tt.want {
+				t.Fatalf("ResolveTargetSchema(%q, %q) = %q, want %q",
+					tt.systemSchema, tt.dbSchema, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestExplicitSysStillNarrowsMultiSystem keeps the narrowing path working now
+// that the guard runs after the overrides.
+func TestExplicitSysStillNarrowsMultiSystem(t *testing.T) {
+	c := &Config{}
+	c.Database.Schema = "test"
+	c.Systems = []SystemConfig{
+		{Name: "order_sys", XMLDir: "./xmls/order", Schema: "order_db"},
+		{Name: "user_sys", XMLDir: "./xmls/user", Schema: "user_db"},
+	}
+
+	c.ApplyCLIOverrides("", 0, "", "", "", "", "user_sys", "./xmls/user", "")
+
+	if len(c.Systems) != 1 {
+		t.Fatalf("got %d systems, want 1 after -sys narrowed a 2-system config", len(c.Systems))
+	}
+	if c.Systems[0].Name != "user_sys" {
+		t.Fatalf("system = %+v, want user_sys", c.Systems[0])
+	}
+}
+
+// TestNormalizeTableNameEmptySchemaDoesNotProduceLeadingDot guards the exported
+// method against a partially filled Config: an empty schema must not yield
+// ".all_sqls", which is not a valid identifier.
+func TestNormalizeTableNameEmptySchemaDoesNotProduceLeadingDot(t *testing.T) {
+	c := &Config{}
+	c.Database.Table = "all_sqls"
+	c.NormalizeTableName()
+
+	if c.Database.Table != "all_sqls" {
+		t.Fatalf("Table = %q, want it left alone when the schema is empty", c.Database.Table)
+	}
+	if strings.HasPrefix(c.Database.Table, ".") {
+		t.Fatalf("Table = %q must not start with a dot", c.Database.Table)
 	}
 }
