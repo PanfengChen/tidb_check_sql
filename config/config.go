@@ -96,7 +96,7 @@ func (c *Config) NormalizeTableName() {
 }
 
 // CLI overrides: command-line flags take precedence over config file values.
-func (c *Config) ApplyCLIOverrides(host string, port int, user, password, schema, table, sys, dir, output string) {
+func (c *Config) ApplyCLIOverrides(host string, port int, user, password, schema, table, sys, dir, output string) error {
 	if host != "" {
 		c.Database.Host = host
 	}
@@ -118,14 +118,31 @@ func (c *Config) ApplyCLIOverrides(host string, port int, user, password, schema
 	if output != "" {
 		c.Output.Format = output
 	}
-	// Only flags the user actually supplied reach here (""" means "not
-	// specified"); main must never forward flag defaults. Even so, replacing the
-	// system struct wholesale dropped every field the caller did not pass, so
-	// `-dir ./other` alone silently cleared the system's schema and sent the
-	// EXPLAINs to the wrong database.
+	// Only flags the user actually supplied reach here ("" means "not
+	// specified"); main must never forward flag defaults.
+	if err := c.applySystemOverrides(sys, dir, schema); err != nil {
+		return err
+	}
+	c.NormalizeTableName()
+	return nil
+}
+
+// applySystemOverrides narrows Database-level fields down to the single system
+// this run will check, merging command-line flags into it field by field.
+//
+// Merging rather than rebuilding matters: replacing the struct wholesale dropped
+// every field the caller did not pass, so `-dir ./other` alone silently cleared
+// the configured schema and sent the EXPLAINs to whatever Database.Schema said.
+// That failure mode is why the multi-system branch looks a system up by name
+// instead of fabricating one — a fabricated system has no schema and no xml_dir,
+// which reproduces the same silent wrong-database behaviour on the very path the
+// error text recommends ("narrow with -sys").
+func (c *Config) applySystemOverrides(sys, dir, schema string) error {
 	switch {
-	case len(c.Systems) == 1:
-		// Merge: flags win field by field, everything else is preserved.
+	case len(c.Systems) <= 1:
+		if len(c.Systems) == 0 {
+			c.Systems = []SystemConfig{{Name: "default", XMLDir: "."}}
+		}
 		sc := &c.Systems[0]
 		if sys != "" {
 			sc.Name = sys
@@ -136,19 +153,43 @@ func (c *Config) ApplyCLIOverrides(host string, port int, user, password, schema
 		if schema != "" {
 			sc.Schema = schema
 		}
-	case sys != "" || dir != "":
-		// Several configured systems and the caller named one: the run is now
-		// about a single system built from the flags.
-		sc := SystemConfig{Name: sys, XMLDir: dir, Schema: schema}
-		if sc.Name == "" {
-			sc.Name = "default"
+
+	case sys != "":
+		// Several systems configured and one was named: narrow to it, keeping
+		// everything the user did not override.
+		for i := range c.Systems {
+			if c.Systems[i].Name == sys {
+				if dir != "" {
+					c.Systems[i].XMLDir = dir
+				}
+				if schema != "" {
+					c.Systems[i].Schema = schema
+				}
+				c.Systems = c.Systems[i : i+1]
+				return nil
+			}
 		}
-		if sc.XMLDir == "" {
-			sc.XMLDir = "."
+		return fmt.Errorf("system %q is not declared in the config (available: %s)",
+			sys, strings.Join(systemNames(c.Systems), ", "))
+
+	default:
+		// Several systems and nothing said which one. A bare -dir/-schema
+		// cannot identify the system it applies to, so refuse instead of
+		// guessing and checking the wrong XML against the wrong schema.
+		if dir != "" || schema != "" {
+			return fmt.Errorf("%d systems configured; name one with -sys to apply -dir/-schema",
+				len(c.Systems))
 		}
-		c.Systems = []SystemConfig{sc}
 	}
-	c.NormalizeTableName()
+	return nil
+}
+
+func systemNames(systems []SystemConfig) []string {
+	names := make([]string, 0, len(systems))
+	for _, s := range systems {
+		names = append(names, s.Name)
+	}
+	return names
 }
 
 // ResolveTargetSchema returns the schema EXPLAIN runs against.

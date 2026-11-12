@@ -143,18 +143,20 @@ func run() int {
 	if xmlDirFromCLI {
 		cliDir = xmlDir
 	}
-	cfg.ApplyCLIOverrides(host, port, user, password, schema, table, cliSys, cliDir, output)
+	if err := cfg.ApplyCLIOverrides(host, port, user, password, schema, table, cliSys, cliDir, output); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		return 1
+	}
 
-	// Checked after the overrides: passing -sys/-dir narrows the run to one
-	// system, so it must not be rejected by a guard that ran earlier. Only a
-	// config that still declares several systems is refused. Silently using the
-	// first one produced a report that looked complete while covering a
-	// fraction of the XML, and — with the result table keyed by
-	// (sys, modname, sqlid) — let same-named SQL from different systems
+	// Checked after the overrides, which can narrow a multi-system config down to
+	// the one named by -sys. Only a config that still declares several systems is
+	// refused. Silently using the first one produced a report that looked
+	// complete while covering a fraction of the XML, and — with the result table
+	// keyed by (sys, modname, sqlid) — let same-named SQL from different systems
 	// overwrite each other.
 	if len(cfg.Systems) > 1 {
 		fmt.Fprintf(os.Stderr, "ERROR: %d systems configured, but only one system is checked per run.\n", len(cfg.Systems))
-		fmt.Fprintf(os.Stderr, "       Split the config and run once per system, or narrow with -sys/-dir.\n")
+		fmt.Fprintf(os.Stderr, "       Split the config and run once per system, or narrow with -sys.\n")
 		return 1
 	}
 

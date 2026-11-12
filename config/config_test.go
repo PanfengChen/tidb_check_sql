@@ -231,32 +231,80 @@ schema = "user_db"
 	}
 }
 
-// TestExplicitSysReplacesSystems documents the intended opposite case: naming a
-// system on the command line is an explicit narrowing and does replace the list.
-func TestExplicitSysReplacesSystems(t *testing.T) {
-	p := writeTemp(t, "multi.toml", `[[check]]
-name = "order_sys"
-xml_dir = "./xmls/order"
-schema = "order_db"
+// TestExplicitSysNarrowsToDeclaredSystem replaces the old
+// TestExplicitSysReplacesSystems. That test passed -sys with a name absent from
+// the config and asserted the list was rebuilt, which pinned the wrong
+// semantics: narrating the error text's own advice ("narrow with -sys") then
+// produced a system with no xml_dir and no schema, so EXPLAIN ran against the
+// wrong database. Naming a *declared* system must narrow to it and keep
+// everything the flags do not override.
+func TestExplicitSysNarrowsToDeclaredSystem(t *testing.T) {
+	newMultiConfig := func() *Config {
+		return &Config{
+			Database: DBConfig{Schema: "test", Table: "test.all_sqls"},
+			Systems: []SystemConfig{
+				{Name: "order_sys", XMLDir: "./xmls/order", Schema: "order_db"},
+				{Name: "user_sys", XMLDir: "./xmls/user", Schema: "user_db"},
+			},
+		}
+	}
 
-[[check]]
-name = "user_sys"
-xml_dir = "./xmls/user"
-schema = "user_db"
-`)
-	c, err := LoadTOML(p)
-	if err != nil {
-		t.Fatalf("LoadTOML returned %v", err)
-	}
-	c.ApplyDefaults()
-	c.ApplyCLIOverrides("", 0, "", "", "", "", "only_this", "./other", "")
+	t.Run("sys alone keeps dir and schema", func(t *testing.T) {
+		c := newMultiConfig()
+		if err := c.ApplyCLIOverrides("", 0, "", "", "", "", "user_sys", "", ""); err != nil {
+			t.Fatalf("ApplyCLIOverrides returned %v", err)
+		}
+		if len(c.Systems) != 1 {
+			t.Fatalf("got %d systems, want 1", len(c.Systems))
+		}
+		want := SystemConfig{Name: "user_sys", XMLDir: "./xmls/user", Schema: "user_db"}
+		if c.Systems[0] != want {
+			t.Fatalf("system = %+v, want %+v", c.Systems[0], want)
+		}
+		if got := ResolveTargetSchema(c.Systems[0].Schema, c.Database.Schema); got != "user_db" {
+			t.Fatalf("targetSchema = %q, want user_db", got)
+		}
+	})
 
-	if len(c.Systems) != 1 {
-		t.Fatalf("got %d systems, want 1 after an explicit -sys/-dir", len(c.Systems))
-	}
-	if c.Systems[0].Name != "only_this" || c.Systems[0].XMLDir != "./other" {
-		t.Fatalf("explicit override not applied: %+v", c.Systems[0])
-	}
+	t.Run("sys plus dir and schema merges", func(t *testing.T) {
+		c := newMultiConfig()
+		if err := c.ApplyCLIOverrides("", 0, "", "", "cli_db", "", "order_sys", "./other", ""); err != nil {
+			t.Fatalf("ApplyCLIOverrides returned %v", err)
+		}
+		want := SystemConfig{Name: "order_sys", XMLDir: "./other", Schema: "cli_db"}
+		if len(c.Systems) != 1 || c.Systems[0] != want {
+			t.Fatalf("systems = %+v, want [%+v]", c.Systems, want)
+		}
+	})
+
+	t.Run("unknown sys is an error", func(t *testing.T) {
+		c := newMultiConfig()
+		err := c.ApplyCLIOverrides("", 0, "", "", "", "", "nope", "./x", "")
+		if err == nil {
+			t.Fatal("expected an error for a system name absent from the config")
+		}
+		if !strings.Contains(err.Error(), "order_sys") || !strings.Contains(err.Error(), "user_sys") {
+			t.Fatalf("error should list the available systems, got %v", err)
+		}
+	})
+
+	t.Run("dir without sys is an error", func(t *testing.T) {
+		c := newMultiConfig()
+		err := c.ApplyCLIOverrides("", 0, "", "", "", "", "", "./xmls/user", "")
+		if err == nil {
+			t.Fatal("expected an error: -dir alone cannot say which system it applies to")
+		}
+		if len(c.Systems) != 2 {
+			t.Fatalf("systems must be left untouched on error, got %+v", c.Systems)
+		}
+	})
+
+	t.Run("schema without sys is an error", func(t *testing.T) {
+		c := newMultiConfig()
+		if err := c.ApplyCLIOverrides("", 0, "", "", "other_db", "", "", "", ""); err == nil {
+			t.Fatal("expected an error: -schema alone cannot say which system it applies to")
+		}
+	})
 }
 
 // TestApplyDefaultsCreatesOneSystem guards the no-config path: something has to
@@ -360,26 +408,6 @@ func TestResolveTargetSchema(t *testing.T) {
 					tt.systemSchema, tt.dbSchema, got, tt.want)
 			}
 		})
-	}
-}
-
-// TestExplicitSysStillNarrowsMultiSystem keeps the narrowing path working now
-// that the guard runs after the overrides.
-func TestExplicitSysStillNarrowsMultiSystem(t *testing.T) {
-	c := &Config{}
-	c.Database.Schema = "test"
-	c.Systems = []SystemConfig{
-		{Name: "order_sys", XMLDir: "./xmls/order", Schema: "order_db"},
-		{Name: "user_sys", XMLDir: "./xmls/user", Schema: "user_db"},
-	}
-
-	c.ApplyCLIOverrides("", 0, "", "", "", "", "user_sys", "./xmls/user", "")
-
-	if len(c.Systems) != 1 {
-		t.Fatalf("got %d systems, want 1 after -sys narrowed a 2-system config", len(c.Systems))
-	}
-	if c.Systems[0].Name != "user_sys" {
-		t.Fatalf("system = %+v, want user_sys", c.Systems[0])
 	}
 }
 
