@@ -95,11 +95,19 @@ func TestNormalizeTableName(t *testing.T) {
 }
 
 // TestApplyCLIOverridesQualifiesTable is the end-to-end version of the same
-// guarantee: `-table all_sqls` must come out qualified, not raw.
+// guarantee: `-table results` must come out qualified, not raw.
+//
+// The error return is checked on purpose. Normalisation now runs before the
+// system is resolved, so Table is qualified even when the call fails; without
+// this assertion the test would pass for a call that was rejected outright and
+// would only prove "the table name gets prefixed", not "this valid input
+// succeeds".
 func TestApplyCLIOverridesQualifiesTable(t *testing.T) {
 	c := &Config{}
 	c.ApplyDefaults()
-	c.ApplyCLIOverrides("", 0, "", "", "orders", "results", "sys1", ".", "")
+	if err := c.ApplyCLIOverrides("", 0, "", "", "orders", "results", "sys1", ".", ""); err != nil {
+		t.Fatalf("ApplyCLIOverrides returned %v", err)
+	}
 
 	if c.Database.Table != "orders.results" {
 		t.Fatalf("Table = %q, want orders.results", c.Database.Table)
