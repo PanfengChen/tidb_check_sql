@@ -28,6 +28,12 @@ func TestParseDemoXMLs(t *testing.T) {
 	if len(result.Statements) == 0 {
 		t.Fatal("expected at least 1 SQL statement, got 0")
 	}
+	// ParseDirectory collects per-file failures in SQLErrors instead of
+	// returning them, so a broken mapper would otherwise pass this test.
+	if len(result.SQLErrors) > 0 {
+		t.Fatalf("expected no parse errors from the sample XMLs, got %d: %v",
+			len(result.SQLErrors), result.SQLErrors)
+	}
 
 	t.Logf("Parsed %d SQL statements from demo XMLs", len(result.Statements))
 	for _, s := range result.Statements {

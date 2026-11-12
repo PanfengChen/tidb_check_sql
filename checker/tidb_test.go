@@ -199,3 +199,39 @@ func TestIsDuplicateColumnErr(t *testing.T) {
 		})
 	}
 }
+
+// TestSplitQualifiedTable pins the shape of the values handed to
+// information_schema. The regression this guards: a qualified default table
+// ("test.all_sqls") was passed straight through as table_name, which can never
+// match the bare identifier stored there, so the column pre-check silently
+// returned false and the ALTER ran on every start.
+func TestSplitQualifiedTable(t *testing.T) {
+	tests := []struct {
+		name          string
+		table         string
+		defaultSchema string
+		wantSchema    string
+		wantName      string
+	}{
+		{"qualified default", "test.all_sqls", "test", "test", "all_sqls"},
+		{"qualified schema differs from config", "other.t", "test", "other", "t"},
+		{"unqualified falls back to config schema", "all_sqls", "test", "test", "all_sqls"},
+		{"unqualified with empty default", "all_sqls", "", "", "all_sqls"},
+		{"empty table", "", "test", "test", ""},
+		{"trailing dot", "test.", "test", "test", ""},
+		{"multi-level splits at last dot", "a.b.c", "test", "a.b", "c"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schema, name := splitQualifiedTable(tt.table, tt.defaultSchema)
+			if schema != tt.wantSchema || name != tt.wantName {
+				t.Fatalf("splitQualifiedTable(%q, %q) = (%q, %q), want (%q, %q)",
+					tt.table, tt.defaultSchema, schema, name, tt.wantSchema, tt.wantName)
+			}
+			if strings.Contains(name, ".") {
+				t.Fatalf("table name %q still contains a dot; information_schema would never match", name)
+			}
+		})
+	}
+}

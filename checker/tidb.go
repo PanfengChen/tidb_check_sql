@@ -112,14 +112,33 @@ func (c *Checker) InitTable() error {
 
 // hasColumn reports whether table has the named column, as seen by the current
 // session. It uses information_schema so that it needs only SELECT.
+//
+// The table may be given qualified (the default `test.all_sqls`), so it is
+// split before the lookup: information_schema.columns.table_name holds a bare
+// identifier and would never match `test.all_sqls`. DATABASE() cannot be used
+// for the schema either — the DSN carries no default database, so DATABASE()
+// is NULL for the whole of InitTable.
 func (c *Checker) hasColumn(table, column string) (bool, error) {
+	schema, name := splitQualifiedTable(table, c.config.Schema)
 	const q = `SELECT COUNT(*) FROM information_schema.columns
-		WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`
+		WHERE table_schema = ? AND table_name = ? AND column_name = ?`
 	var n int
-	if err := c.db.QueryRow(q, table, column).Scan(&n); err != nil {
+	if err := c.db.QueryRow(q, schema, name, column).Scan(&n); err != nil {
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// splitQualifiedTable splits a possibly schema-qualified table name into its
+// schema and bare table name, falling back to defaultSchema when the name is
+// unqualified. The split is at the last dot: in MySQL a table name cannot
+// contain a dot unless quoted, and a quoted name reaching here is already
+// broken elsewhere.
+func splitQualifiedTable(table, defaultSchema string) (schema, name string) {
+	if i := strings.LastIndex(table, "."); i >= 0 {
+		return table[:i], table[i+1:]
+	}
+	return defaultSchema, table
 }
 
 // isDuplicateColumnErr reports whether err is MySQL/TiDB error 1060 (duplicate
