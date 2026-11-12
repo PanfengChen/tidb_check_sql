@@ -2,11 +2,12 @@ package checker
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 
 	"check_sql_go/parser"
 )
@@ -59,7 +60,14 @@ func (c *Checker) Close() {
 	}
 }
 
-// InitTable creates the result table if it does not exist.
+// InitTable creates the result table if it does not exist and upgrades tables
+// created by older versions.
+//
+// CREATE TABLE IF NOT EXISTS is a no-op on an existing table, so a table built
+// before the suggestion column existed would silently keep the old shape and
+// every UpdateResult would fail with "Unknown column" — which main only logs.
+// The ALTER below is therefore part of the schema contract, not an optional
+// nicety; duplicate-column errors are ignored so it stays idempotent.
 func (c *Checker) InitTable() error {
 	createSQL := fmt.Sprintf(
 		`CREATE TABLE IF NOT EXISTS %s (
@@ -78,7 +86,27 @@ func (c *Checker) InitTable() error {
 	if err != nil {
 		return fmt.Errorf("cannot create table %s: %w", c.config.Table, err)
 	}
+
+	alterSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN suggestion TEXT`, c.config.Table)
+	if _, err := c.db.Exec(alterSQL); err != nil && !isDuplicateColumnErr(err) {
+		return fmt.Errorf("cannot add suggestion column to %s: %w", c.config.Table, err)
+	}
 	return nil
+}
+
+// isDuplicateColumnErr reports whether err is MySQL/TiDB error 1060 (duplicate
+// column), which is the expected outcome when the column already exists. The
+// driver's typed error is checked first; the string match is a fallback for
+// wrapped or non-standard error paths.
+func isDuplicateColumnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) && mysqlErr.Number == 1060 {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "duplicate column")
 }
 
 // InsertOrUpdateSQL stores extracted SQL into the result table (phase 1: initSqls).

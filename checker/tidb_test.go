@@ -1,9 +1,13 @@
 package checker
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 func TestTruncateErr(t *testing.T) {
@@ -85,7 +89,7 @@ func TestTruncateErrMultibyteBoundary(t *testing.T) {
 }
 
 // TestTruncateErrQuotesAreNotEscaped pins the removal of the old
-// ReplaceAll("'", "''"): the message is stored through a bound parameter, so
+// ReplaceAll("'", "”"): the message is stored through a bound parameter, so
 // doubling quotes only corrupted what the operator reads back.
 func TestTruncateErrQuotesAreNotEscaped(t *testing.T) {
 	in := strings.Repeat("'", 600)
@@ -166,5 +170,32 @@ func TestTruncateErrZeroAndNegativeLimit(t *testing.T) {
 		if got != "" {
 			t.Fatalf("maxLen=%d produced %q, want empty", maxLen, got)
 		}
+	}
+}
+
+// TestIsDuplicateColumnErr pins the classification that keeps the schema
+// upgrade idempotent. Any widening here would make InitTable either fail on a
+// healthy table or swallow a real schema error.
+func TestIsDuplicateColumnErr(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"typed 1060", &mysql.MySQLError{Number: 1060, Message: "Duplicate column name 'suggestion'"}, true},
+		{"wrapped 1060", fmt.Errorf("add column: %w", &mysql.MySQLError{Number: 1060, Message: "Duplicate column name 'suggestion'"}), true},
+		{"typed 1054 unknown column", &mysql.MySQLError{Number: 1054, Message: "Unknown column 'suggestion'"}, false},
+		{"typed 1064 syntax", &mysql.MySQLError{Number: 1064, Message: "You have an error in your SQL syntax"}, false},
+		{"plain string fallback", errors.New("Duplicate column name 'suggestion'"), true},
+		{"unrelated error", errors.New("connection refused"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isDuplicateColumnErr(tt.err); got != tt.want {
+				t.Fatalf("isDuplicateColumnErr(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
 	}
 }

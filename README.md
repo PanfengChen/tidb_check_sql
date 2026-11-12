@@ -200,6 +200,8 @@ check_sql ./xmls/ -output terminal
 | `remark` | VARCHAR(512) | 备注 |
 | `suggestion` | TEXT | 改写建议（JSON 格式，Perl 版忽略此列） |
 
+> **升级提示**：`suggestion` 列是后加的。用旧版本建过结果表的，直接跑新版本会在 `InitTable` 里自动补这一列（内部执行 `ALTER TABLE ... ADD COLUMN suggestion TEXT`，列已存在时报 1060 并忽略）；若目标账号没有 `ALTER` 权限，需手工加列或删除旧表让它重建。
+
 查询示例：
 
 ```sql
@@ -405,9 +407,9 @@ systems = [
 
 ## 测试现状
 
-当前仓库含 **27 个测试**（`advisor` / `checker` / `parser` / `report` / `sql` 五个包），覆盖 iBATIS 遗留标签解析、`<iterate>` 批量迭代、分页位参数替换，以及 `checker` 的错误消息截断（含多字节边界）等高风险路径。
+当前仓库含 **35 个测试**（`advisor` / `checker` / `parser` / `report` / `sql` 五个包），覆盖 iBATIS 遗留标签解析、`<iterate>` 批量迭代、分页位参数替换，以及 `checker` 的错误消息截断（含多字节边界）等高风险路径。
 
-相对约 3600 行代码，**测试覆盖仍然偏薄**，`checker` 的核心判定路径（EXPLAIN 结果归类、错误码映射）依赖实机 TiDB，尚无单测。按优先级补充：
+相对约 3600 行 Go 代码（其中非测试代码约 2600 行），**测试覆盖仍然偏薄**，`checker` 的核心判定路径（EXPLAIN 结果归类、错误码映射）依赖实机 TiDB，尚无单测。按优先级补充：
 
 - **P0 `checker` 剩余纯函数**：错误消息归类与 `truncateErr` 已覆盖；下一步把 EXPLAIN 结果 → matched 状态判定抽成纯函数，用表驱动测试锁住（成本最低、收益最高，因为判对判错都落在这里）
 - **P1 `config`**：TOML 解析的缺省值、非法配置与多系统配置
