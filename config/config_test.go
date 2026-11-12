@@ -603,3 +603,41 @@ func TestPlaceholderFromOverridesIsAlsoRenamable(t *testing.T) {
 		t.Fatalf("systems = %+v, want one system named mysys", c.Systems)
 	}
 }
+
+// TestEnsureSyntheticSystemIsIdempotent: the helper must not clobber a config
+// that already has systems. Keeping the guard inside makes it safe for a caller
+// that forgets the len==0 check — otherwise it would reproduce the very bug this
+// round fixed, silently replacing every declared system with the placeholder.
+func TestEnsureSyntheticSystemIsIdempotent(t *testing.T) {
+	c := &Config{}
+	c.Systems = []SystemConfig{
+		{Name: "order_sys", XMLDir: "./xmls/order", Schema: "order_db"},
+		{Name: "user_sys", XMLDir: "./xmls/user", Schema: "user_db"},
+	}
+
+	c.ensureSyntheticSystem()
+
+	if len(c.Systems) != 2 {
+		t.Fatalf("got %d systems, want the declared 2 left untouched", len(c.Systems))
+	}
+	if c.Systems[0].Name != "order_sys" || c.Systems[1].Name != "user_sys" {
+		t.Fatalf("systems were replaced: %+v", c.Systems)
+	}
+	if c.syntheticSystem {
+		t.Fatal("syntheticSystem must not be set when real systems exist")
+	}
+}
+
+// TestEnsureSyntheticSystemInstallsPlaceholder covers the empty case it exists
+// for.
+func TestEnsureSyntheticSystemInstallsPlaceholder(t *testing.T) {
+	c := &Config{}
+	c.ensureSyntheticSystem()
+
+	if len(c.Systems) != 1 || c.Systems[0].Name != "default" || c.Systems[0].XMLDir != "." {
+		t.Fatalf("placeholder = %+v", c.Systems)
+	}
+	if !c.syntheticSystem {
+		t.Fatal("syntheticSystem must be set for the placeholder")
+	}
+}

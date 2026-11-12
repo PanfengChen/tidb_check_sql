@@ -120,6 +120,10 @@ func (c *Config) NormalizeTableName() {
 // check, so the original list cannot be recovered. Call it once per loaded
 // Config; a second call would treat the already-narrowed list as the full
 // configuration.
+//
+// On error the Config may already be partially updated (Database fields are
+// applied before the system is resolved). Callers should treat a non-nil error
+// as "this Config is unusable" rather than continuing with it.
 func (c *Config) ApplyCLIOverrides(host string, port int, user, password, schema, table, sys, dir, output string) error {
 	if host != "" {
 		c.Database.Host = host
@@ -156,7 +160,13 @@ func (c *Config) ApplyCLIOverrides(host string, port int, user, password, schema
 // syntheticSystem, so a placeholder built anywhere else would be rejected as an
 // unknown declared name, making an identical system renamable or not depending on
 // which function happened to create it.
+// It is idempotent: a config that already declares systems is left alone, so a
+// caller that forgets the len==0 guard cannot silently replace the user's
+// configuration with the placeholder.
 func (c *Config) ensureSyntheticSystem() {
+	if len(c.Systems) > 0 {
+		return
+	}
 	c.Systems = []SystemConfig{{Name: "default", XMLDir: "."}}
 	c.syntheticSystem = true
 }
