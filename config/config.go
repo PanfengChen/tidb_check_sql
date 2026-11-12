@@ -121,9 +121,10 @@ func (c *Config) NormalizeTableName() {
 // Config; a second call would treat the already-narrowed list as the full
 // configuration.
 //
-// On error the Config may already be partially updated (Database fields are
-// applied before the system is resolved). Callers should treat a non-nil error
-// as "this Config is unusable" rather than continuing with it.
+// On error the Config may already be partially updated: Database fields are
+// applied first, and Database.Table is normalised before the system is resolved.
+// Callers should treat a non-nil error as "this Config is unusable" rather than
+// continuing with it.
 func (c *Config) ApplyCLIOverrides(host string, port int, user, password, schema, table, sys, dir, output string) error {
 	if host != "" {
 		c.Database.Host = host
@@ -146,13 +147,16 @@ func (c *Config) ApplyCLIOverrides(host string, port int, user, password, schema
 	if output != "" {
 		c.Output.Format = output
 	}
+	// Normalise before resolving the system, not after: it is idempotent and only
+	// adds the schema prefix, so running it first costs nothing — and it keeps the
+	// table qualified even when the system resolution below fails, instead of
+	// leaving a bare "all_sqls" that CREATE TABLE would reject with 1046 if a
+	// caller ever decides to continue past the error.
+	c.NormalizeTableName()
+
 	// Only flags the user actually supplied reach here ("" means "not
 	// specified"); main must never forward flag defaults.
-	if err := c.applySystemOverrides(sys, dir, schema); err != nil {
-		return err
-	}
-	c.NormalizeTableName()
-	return nil
+	return c.applySystemOverrides(sys, dir, schema)
 }
 
 // ensureSyntheticSystem installs the default placeholder system and records its
@@ -160,9 +164,10 @@ func (c *Config) ApplyCLIOverrides(host string, port int, user, password, schema
 // syntheticSystem, so a placeholder built anywhere else would be rejected as an
 // unknown declared name, making an identical system renamable or not depending on
 // which function happened to create it.
-// It is idempotent: a config that already declares systems is left alone, so a
-// caller that forgets the len==0 guard cannot silently replace the user's
-// configuration with the placeholder.
+// It is idempotent: when the config already declares systems it does nothing at
+// all — it neither replaces them nor marks them synthetic. That way a caller who
+// forgets the len==0 guard cannot silently replace the user's configuration with
+// the placeholder.
 func (c *Config) ensureSyntheticSystem() {
 	if len(c.Systems) > 0 {
 		return

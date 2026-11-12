@@ -641,3 +641,21 @@ func TestEnsureSyntheticSystemInstallsPlaceholder(t *testing.T) {
 		t.Fatal("syntheticSystem must be set for the placeholder")
 	}
 }
+
+// TestTableQualifiedEvenWhenOverridesFail: normalisation runs before the system
+// is resolved, so a rejected -sys still leaves Database.Table qualified. Leaving
+// it bare would make CREATE TABLE fail with 1046 for any caller that decides to
+// carry on after the error — resurrecting a bug fixed two rounds ago.
+func TestTableQualifiedEvenWhenOverridesFail(t *testing.T) {
+	c := &Config{}
+	c.Database.Schema = "test"
+	c.Database.Table = "all_sqls"
+	c.Systems = []SystemConfig{{Name: "real", XMLDir: "./xmls/real", Schema: "real_db"}}
+
+	if err := c.ApplyCLIOverrides("", 0, "", "", "", "", "typo_sys", "", ""); err == nil {
+		t.Fatal("expected an error for an undeclared system name")
+	}
+	if c.Database.Table != "test.all_sqls" {
+		t.Fatalf("Table = %q after a failed override, want it qualified", c.Database.Table)
+	}
+}
