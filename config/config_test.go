@@ -734,11 +734,23 @@ func TestEachFlagAppliedIndividually(t *testing.T) {
 			},
 		},
 		{
-			name:  "user and password",
-			apply: func(c *Config) error { return c.ApplyCLIOverrides("", 0, "bob", "pw2", "", "", "", "", "") },
+			// Split from "password" deliberately: a cross-wired assignment
+			// (user written into password) must name the field it broke, which
+			// a combined assertion cannot do.
+			name:  "user",
+			apply: func(c *Config) error { return c.ApplyCLIOverrides("", 0, "bob", "", "", "", "", "", "") },
 			assert: func(t *testing.T, c *Config) {
-				if c.Database.User != "bob" || c.Database.Password != "pw2" {
-					t.Fatalf("credentials = %q/%q", c.Database.User, c.Database.Password)
+				if c.Database.User != "bob" {
+					t.Fatalf("User = %q, want bob", c.Database.User)
+				}
+			},
+		},
+		{
+			name:  "password",
+			apply: func(c *Config) error { return c.ApplyCLIOverrides("", 0, "", "pw2", "", "", "", "", "") },
+			assert: func(t *testing.T, c *Config) {
+				if c.Database.Password != "pw2" {
+					t.Fatalf("Password = %q, want pw2", c.Database.Password)
 				}
 			},
 		},
