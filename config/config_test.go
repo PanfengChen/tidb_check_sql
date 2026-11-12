@@ -549,3 +549,57 @@ schema = "real_db"
 		t.Fatal("expected an error for renaming a system declared in the config file")
 	}
 }
+
+// TestConfigWithoutCheckSectionAllowsRenaming: a config file that sets only
+// [database] declares no system, so ApplyDefaults creates the placeholder and
+// -sys is free to name it. The README used to scope this to "no config file",
+// which understated it.
+func TestConfigWithoutCheckSectionAllowsRenaming(t *testing.T) {
+	p := writeTemp(t, "dbonly.toml", `[database]
+host = "10.0.0.1"
+schema = "realdb"
+`)
+	c, err := LoadTOML(p)
+	if err != nil {
+		t.Fatalf("LoadTOML returned %v", err)
+	}
+	c.ApplyDefaults()
+
+	if err := c.ApplyCLIOverrides("", 0, "", "", "", "", "anything", "", ""); err != nil {
+		t.Fatalf("expected the placeholder to be renamable, got %v", err)
+	}
+	if c.Systems[0].Name != "anything" {
+		t.Fatalf("system = %+v, want the requested name", c.Systems[0])
+	}
+}
+
+// TestDefaultSystemNameIsMaterialized: without -sys the placeholder must still
+// reach the result table with a usable name, never an empty string.
+func TestDefaultSystemNameIsMaterialized(t *testing.T) {
+	c := &Config{}
+	c.ApplyDefaults()
+	if err := c.ApplyCLIOverrides("", 0, "", "", "", "", "", "", ""); err != nil {
+		t.Fatalf("ApplyCLIOverrides returned %v", err)
+	}
+
+	if c.Systems[0].Name != "default" {
+		t.Fatalf("system name = %q, want \"default\"", c.Systems[0].Name)
+	}
+}
+
+// TestPlaceholderFromOverridesIsAlsoRenamable: the same placeholder must behave
+// the same no matter which function created it. applySystemOverrides could build
+// one itself without carrying the provenance mark, so a Config that skipped
+// ApplyDefaults saw its own synthetic system rejected as "not declared".
+func TestPlaceholderFromOverridesIsAlsoRenamable(t *testing.T) {
+	c := &Config{}
+	c.Database.Schema = "test"
+	c.Database.Table = "test.all_sqls"
+
+	if err := c.ApplyCLIOverrides("", 0, "", "", "", "", "mysys", "", ""); err != nil {
+		t.Fatalf("placeholder built by ApplyCLIOverrides should be renamable, got %v", err)
+	}
+	if len(c.Systems) != 1 || c.Systems[0].Name != "mysys" {
+		t.Fatalf("systems = %+v, want one system named mysys", c.Systems)
+	}
+}

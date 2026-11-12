@@ -91,8 +91,7 @@ func (c *Config) ApplyDefaults() {
 		c.Output.Format = "html"
 	}
 	if len(c.Systems) == 0 {
-		c.Systems = []SystemConfig{{Name: "default", XMLDir: "."}}
-		c.syntheticSystem = true
+		c.ensureSyntheticSystem()
 	}
 	c.NormalizeTableName()
 }
@@ -152,6 +151,16 @@ func (c *Config) ApplyCLIOverrides(host string, port int, user, password, schema
 	return nil
 }
 
+// ensureSyntheticSystem installs the default placeholder system and records its
+// provenance. Every placeholder must be created here: the rename check relies on
+// syntheticSystem, so a placeholder built anywhere else would be rejected as an
+// unknown declared name, making an identical system renamable or not depending on
+// which function happened to create it.
+func (c *Config) ensureSyntheticSystem() {
+	c.Systems = []SystemConfig{{Name: "default", XMLDir: "."}}
+	c.syntheticSystem = true
+}
+
 // applySystemOverrides narrows Database-level fields down to the single system
 // this run will check, merging command-line flags into it field by field.
 //
@@ -166,7 +175,7 @@ func (c *Config) applySystemOverrides(sys, dir, schema string) error {
 	switch {
 	case len(c.Systems) <= 1:
 		if len(c.Systems) == 0 {
-			c.Systems = []SystemConfig{{Name: "default", XMLDir: "."}}
+			c.ensureSyntheticSystem()
 		}
 		sc := &c.Systems[0]
 		if sys != "" {
