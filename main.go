@@ -242,7 +242,7 @@ func run() int {
 		total++
 
 		// Update result table
-		updErr := chk.UpdateResult(sys, stmt.ModName, stmt.SQLID, testSQL, matched, errMsg)
+		updErr := chk.UpdateResult(sys, stmt.ModName, stmt.SQLID, testSQL, matched, errMsg, suggestion)
 		if updErr != nil {
 			fmt.Printf("       UPDATE FAIL: %s:%s — %v\n", stmt.ModName, stmt.SQLID, updErr)
 		}

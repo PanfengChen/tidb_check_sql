@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // Rule represents a single rewrite suggestion rule.
@@ -503,9 +504,22 @@ func (a *Advisor) genericAnalyze(sqlText, errMsg string) []SuggestionHint {
 	return hints
 }
 
+// truncateErr truncates an error message to at most maxLen bytes plus an
+// ellipsis, backing off to a rune boundary so Chinese messages from TiDB are
+// never cut mid-character. Invalid bytes are dropped first, so a message that
+// arrived corrupted still yields valid UTF-8.
+// It mirrors checker.truncateErr; keep the two in sync.
 func truncateErr(err string, maxLen int) string {
-	if len(err) > maxLen {
-		return err[:maxLen] + "..."
+	if maxLen <= 0 {
+		return ""
 	}
-	return err
+	s := strings.ToValidUTF8(err, "")
+	if len(s) <= maxLen {
+		return s
+	}
+	cut := maxLen
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }

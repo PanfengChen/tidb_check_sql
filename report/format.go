@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xuri/excelize/v2"
 
@@ -532,10 +533,21 @@ func outputExcel(s Summary, dir string) error {
 	return nil
 }
 
+// truncateStr truncates to at most maxLen bytes plus an ellipsis, backing off
+// to a rune boundary so a multi-byte character is never split in half, and
+// collapsing newlines first so the result stays on one console line.
 func truncateStr(s string, maxLen int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) > maxLen {
-		return s[:maxLen] + "..."
+	if maxLen <= 0 {
+		return ""
 	}
-	return s
+	s = strings.ToValidUTF8(s, "")
+	if len(s) <= maxLen {
+		return s
+	}
+	cut := maxLen
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }
