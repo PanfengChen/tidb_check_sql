@@ -219,7 +219,7 @@ func run() int {
 	var summary report.Summary
 	summary.System = sys
 
-	total, success, failed := 0, 0, 0
+	total, success, failed, writeErrors := 0, 0, 0, 0
 	for _, stmt := range parseResult.Statements {
 		// Apply parameter substitution to generate test SQL
 		testSQL := sqlpkg.ExtractAndReplace(stmt.OldSQL)
@@ -244,7 +244,11 @@ func run() int {
 		// Update result table
 		updErr := chk.UpdateResult(sys, stmt.ModName, stmt.SQLID, testSQL, matched, errMsg, suggestion)
 		if updErr != nil {
+			// A failed UPDATE means this row keeps the values from the last run
+			// (REPLACE resets them every run), so the report and the table
+			// disagree. Surface it: count it and fail the run.
 			fmt.Printf("       UPDATE FAIL: %s:%s — %v\n", stmt.ModName, stmt.SQLID, updErr)
+			writeErrors++
 		}
 
 		status := "✅"
@@ -281,6 +285,10 @@ func run() int {
 		return 1
 	}
 
+	if writeErrors > 0 {
+		fmt.Fprintf(os.Stderr, "ERROR: %d of %d result rows could not be written back\n", writeErrors, total)
+		return 1
+	}
 	if failed > 0 {
 		return 1
 	}

@@ -64,10 +64,16 @@ func (c *Checker) Close() {
 // created by older versions.
 //
 // CREATE TABLE IF NOT EXISTS is a no-op on an existing table, so a table built
-// before the suggestion column existed would silently keep the old shape and
-// every UpdateResult would fail with "Unknown column" — which main only logs.
-// The ALTER below is therefore part of the schema contract, not an optional
-// nicety; duplicate-column errors are ignored so it stays idempotent.
+// before the suggestion column existed would keep the old shape and every
+// UpdateResult would fail with "Unknown column". The column is therefore
+// checked explicitly and only added when missing.
+//
+// The check goes through information_schema rather than an unconditional
+// ALTER + error 1060: a fresh install always creates the column, so an
+// unconditional ALTER would require ALTER privileges on every run even though
+// nothing needs changing. Application accounts commonly have only
+// SELECT/INSERT/UPDATE, and would fail to start on error 1142 (command denied)
+// where the previous version worked fine.
 func (c *Checker) InitTable() error {
 	createSQL := fmt.Sprintf(
 		`CREATE TABLE IF NOT EXISTS %s (
@@ -87,11 +93,33 @@ func (c *Checker) InitTable() error {
 		return fmt.Errorf("cannot create table %s: %w", c.config.Table, err)
 	}
 
+	hasColumn, err := c.hasColumn(c.config.Table, "suggestion")
+	if err != nil {
+		return fmt.Errorf("cannot inspect columns of %s: %w", c.config.Table, err)
+	}
+	if hasColumn {
+		return nil
+	}
+
 	alterSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN suggestion TEXT`, c.config.Table)
+	// 1060 is still tolerated: two processes starting against the same old
+	// table can both pass the check above, and the loser must not abort.
 	if _, err := c.db.Exec(alterSQL); err != nil && !isDuplicateColumnErr(err) {
 		return fmt.Errorf("cannot add suggestion column to %s: %w", c.config.Table, err)
 	}
 	return nil
+}
+
+// hasColumn reports whether table has the named column, as seen by the current
+// session. It uses information_schema so that it needs only SELECT.
+func (c *Checker) hasColumn(table, column string) (bool, error) {
+	const q = `SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`
+	var n int
+	if err := c.db.QueryRow(q, table, column).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // isDuplicateColumnErr reports whether err is MySQL/TiDB error 1060 (duplicate

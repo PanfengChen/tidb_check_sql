@@ -9,11 +9,15 @@ import (
 	sqlpkg "check_sql_go/sql"
 )
 
-// TestParseDemoXMLs tests parsing against the original Perl demo XML files.
+// TestParseDemoXMLs tests parsing against the sample mapper XMLs shipped in the
+// repository (xmls/). The path is repository-relative so a fresh clone runs it
+// too — an earlier version pointed at ../../check_original/check/xmls, a
+// directory that only existed on the author's machine, so every other clone
+// silently skipped this test.
 func TestParseDemoXMLs(t *testing.T) {
-	demoDir := "../../check_original/check/xmls"
-	if _, err := os.Stat(demoDir); os.IsNotExist(err) {
-		t.Skip("demo XML directory not found, skipping")
+	demoDir := filepath.Join("..", "xmls")
+	if _, err := os.Stat(demoDir); err != nil {
+		t.Fatalf("sample XML directory %s is missing: %v", demoDir, err)
 	}
 
 	result, err := ParseDirectory(demoDir)
