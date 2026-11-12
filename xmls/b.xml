@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<select id="selectOne" >
+<sql type="Str">
+	select * from test.all_sqls	
+</sql>
+<where>
+	<if test="gender != null">
+	  matched = 'F'
+	 </if>
+<!--  it's a  comment -->
+</where>
+</select>

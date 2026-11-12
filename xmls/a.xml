@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<select id="selectOne" >
+<sql type="Str">
+	select * from test.all_sqls	
+</sql>
+<where>
+	<if test="name != null">
+	and name like concat('%',#{name},'%')
+	</if>
+	<if test="gender != null">
+	and gender = #{gender}
+	 </if>
+	<if test="begin != null and end != null">
+            and entrydate between #{begin} and #{end}
+	and dt &lt; #{dt}
+	</if>
+	<and type = "And">
+		<if test="dd!=null " type="If"><str type="Str"><![CDATA[unld=#unld#]]></str></if>
+		<if test="ee!=null " type="If"><str type="Str"><![CDATA[uxld=#uxld#]]></str></if>
+
+
+
+	</and>
+<!--  it's a  comment -->
+</where>
+</select>

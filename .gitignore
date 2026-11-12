@@ -1,0 +1,6 @@
+# 编译产物
+/check_sql
+/check_sql_*
+
+# 生成的检查报告
+/check_report_*/

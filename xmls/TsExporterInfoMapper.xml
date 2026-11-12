@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ts.monitor.mapper.TsExporterInfoMapper">
+  <resultMap id="BaseResultMap" type="com.ts.monitor.domain.TsExporterInfo">
+    <id column="id" jdbcType="BIGINT" property="id" />
+    <result column="host" jdbcType="VARCHAR" property="host" />
+    <result column="port" jdbcType="INTEGER" property="port" />
+    <result column="status" jdbcType="TINYINT" property="status" />
+    <result column="name" jdbcType="VARCHAR" property="name" />
+    <result column="remark" jdbcType="VARCHAR" property="remark" />
+    <result column="del_flag" jdbcType="CHAR" property="delFlag" />
+    <result column="create_time" jdbcType="TIMESTAMP" property="createTime" />
+    <result column="last_update_time" jdbcType="TIMESTAMP" property="lastUpdateTime" />
+    <result column="last_heartbeat" jdbcType="TIMESTAMP" property="lastHeartbeat"/>
+  </resultMap>
+  <sql id="Base_Column_List">
+    <!--@mbg.generated-->
+    id, `host`, port, `status`, `name`, remark, del_flag, create_time, last_update_time, last_heartbeat
+  </sql>
+  <select id="selectByPrimaryKey" parameterType="java.lang.Long" resultMap="BaseResultMap">
+    <!--@mbg.generated-->
+    select 
+    <include refid="Base_Column_List" />
+    from ts_exporter_info
+    where id = #{id,jdbcType=BIGINT} and del_flag = '0'
+  </select>
+  <delete id="deleteByPrimaryKey" parameterType="java.lang.Long">
+    <!--@mbg.generated-->
+    update ts_exporter_info set del_flag = '0'
+    where id = #{id,jdbcType=BIGINT}
+  </delete>
+  <insert id="insert" keyColumn="id" keyProperty="id" parameterType="com.ts.monitor.domain.TsExporterInfo" useGeneratedKeys="true">
+    <!--@mbg.generated-->
+    insert into ts_exporter_info (`host`, port, `status`, 
+      `name`, remark, del_flag, 
+      create_time, last_update_time, last_heartbeat)
+    values (#{host,jdbcType=VARCHAR}, #{port,jdbcType=INTEGER}, #{status,jdbcType=TINYINT}, 
+      #{name,jdbcType=VARCHAR}, #{remark,jdbcType=VARCHAR}, #{delFlag,jdbcType=CHAR}, 
+      #{createTime,jdbcType=TIMESTAMP}, #{lastUpdateTime,jdbcType=TIMESTAMP}, #{lastHeartbeat,jdbcType=TIMESTAMP})
+  </insert>
+  <insert id="insertSelective" keyColumn="id" keyProperty="id" parameterType="com.ts.monitor.domain.TsExporterInfo" useGeneratedKeys="true">
+    <!--@mbg.generated-->
+    insert into ts_exporter_info
+    <trim prefix="(" suffix=")" suffixOverrides=",">
+      <if test="host != null">
+        `host`,
+      </if>
+      <if test="port != null">
+        port,
+      </if>
+      <if test="status != null">
+        `status`,
+      </if>
+      <if test="name != null">
+        `name`,
+      </if>
+      <if test="remark != null">
+        remark,
+      </if>
+      <if test="delFlag != null">
+        del_flag,
+      </if>
+      <if test="createTime != null">
+        create_time,
+      </if>
+      <if test="lastUpdateTime != null">
+        last_update_time,
+      </if>
+      <if test="lastHeartbeat != null">
+        last_heartbeat,
+      </if>
+    </trim>
+    <trim prefix="values (" suffix=")" suffixOverrides=",">
+      <if test="host != null">
+        #{host,jdbcType=VARCHAR},
+      </if>
+      <if test="port != null">
+        #{port,jdbcType=INTEGER},
+      </if>
+      <if test="status != null">
+        #{status,jdbcType=TINYINT},
+      </if>
+      <if test="name != null">
+        #{name,jdbcType=VARCHAR},
+      </if>
+      <if test="remark != null">
+        #{remark,jdbcType=VARCHAR},
+      </if>
+      <if test="delFlag != null">
+        #{delFlag,jdbcType=CHAR},
+      </if>
+      <if test="createTime != null">
+        #{createTime,jdbcType=TIMESTAMP},
+      </if>
+      <if test="lastUpdateTime != null">
+        #{lastUpdateTime,jdbcType=TIMESTAMP},
+      </if>
+      <if test="lastHeartbeat != null">
+        #{lastHeartbeat,jdbcType=TIMESTAMP},
+      </if>
+    </trim>
+  </insert>
+  <update id="updateByPrimaryKeySelective" parameterType="com.ts.monitor.domain.TsExporterInfo">
+    <!--@mbg.generated-->
+    update ts_exporter_info
+    <set>
+      <if test="host != null">
+        `host` = #{host,jdbcType=VARCHAR},
+      </if>
+      <if test="port != null">
+        port = #{port,jdbcType=INTEGER},
+      </if>
+      <if test="status != null">
+        `status` = #{status,jdbcType=TINYINT},
+      </if>
+      <if test="name != null">
+        `name` = #{name,jdbcType=VARCHAR},
+      </if>
+      <if test="remark != null">
+        remark = #{remark,jdbcType=VARCHAR},
+      </if>
+      <if test="delFlag != null">
+        del_flag = #{delFlag,jdbcType=CHAR},
+      </if>
+      <if test="createTime != null">
+        create_time = #{createTime,jdbcType=TIMESTAMP},
+      </if>
+      <if test="lastUpdateTime != null">
+        last_update_time = #{lastUpdateTime,jdbcType=TIMESTAMP},
+      </if>
+      <if test="lastHeartbeat != null">
+        last_heartbeat = #{lastHeartbeat,jdbcType=TIMESTAMP},
+      </if>
+    </set>
+    where id = #{id,jdbcType=BIGINT}
+  </update>
+  <update id="updateByPrimaryKey" parameterType="com.ts.monitor.domain.TsExporterInfo">
+    <!--@mbg.generated-->
+    update ts_exporter_info
+    set `host` = #{host,jdbcType=VARCHAR},
+      port = #{port,jdbcType=INTEGER},
+      `status` = #{status,jdbcType=TINYINT},
+      `name` = #{name,jdbcType=VARCHAR},
+      remark = #{remark,jdbcType=VARCHAR},
+      del_flag = #{delFlag,jdbcType=CHAR},
+      create_time = #{createTime,jdbcType=TIMESTAMP},
+      last_update_time = #{lastUpdateTime,jdbcType=TIMESTAMP},
+        last_heartbeat = #{lastHeartbeat,jdbcType=TIMESTAMP}
+    where id = #{id,jdbcType=BIGINT}
+  </update>
+
+  <select id="selectAllInfos" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from ts_exporter_info
+    where del_flag = '0'
+    <if test="name != null and name != ''">
+      and name like concat('%', #{name}, '%')
+    </if>
+    <if test="host != null and host != ''">
+      and host like concat('%', #{host}, '%')
+    </if>
+    <if test="status != null">
+      and status = #{status}
+    </if>
+  </select>
+
+  <select id="selectByInstanceId" resultMap="BaseResultMap">
+    select ei.*
+    from ts_exporter_info ei
+     inner join ts_instance_info tii on ei.id = tii.export_id and tii.del_flag = '0'
+    where ei.del_flag = '0' and tii.id = #{instanceId}
+  </select>
+
+  <select id="selectByInstanceCode" resultMap="BaseResultMap">
+    select ei.*
+    from ts_exporter_info ei
+    inner join ts_instance_info tii on ei.id = tii.export_id and tii.del_flag = '0'
+    where ei.del_flag = '0' and tii.code = #{instanceCode}
+  </select>
+</mapper>

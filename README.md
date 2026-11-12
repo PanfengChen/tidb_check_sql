@@ -50,8 +50,20 @@ check_sql ~/check_demo/xmls/ -host 10.0.0.1 -port 4000 -user root -schema test
 | `-schema` | `test` | 目标数据库 |
 | `-table` | `test.all_sqls` | 结果存储表 |
 | `-sys` | `default` | 业务系统名称 |
-| `-output` | `html` | 输出格式：`html` / `json` / `csv` / `terminal` |
+| `-output` | `html` | 输出格式：`html` / `json` / `csv` / `excel` / `terminal` |
 | `-config` | — | TOML 配置文件路径 |
+| `-version` | — | 打印版本信息（版本号 / commit / 构建时间）并退出 |
+
+### 查看版本
+
+```bash
+check_sql -version
+# check_sql v1.0.0
+#   commit: f4b41a6
+#   built:  2026-08-14T02:18:10Z
+```
+
+版本号在编译时通过 `-ldflags` 注入，默认值为 `dev`。正式发布请用 `make build` 或 `make linux`（见下方「编译（开发者）」章节）。
 
 ### 基本用法
 
@@ -123,6 +135,39 @@ check_sql ./xmls/ -output json
 # 生成 check_report_XXX/report.json
 ```
 
+`details` 中每条 SQL 的 `suggestions` 字段是结构化的对象数组，每个对象拆分为 `category` / `title` / `suggestion` / `rewrite` / `reference` 五个字段。
+
+> ⚠️ **Breaking change**：本次把原来的 `suggestion`（单个 JSON 字符串）字段重命名为 `suggestions`（对象数组）。消费旧 JSON 的下游脚本/看板需同步更新字段名。
+
+```json
+{
+  "modname": "OrderMapper",
+  "sqlid": "findById",
+  "oldsql": "select * from orders",
+  "testsql": "select * from orders",
+  "matched": "F",
+  "errmsg": "Error 1045 ...",
+  "suggestions": [
+    {
+      "category": "syntax-removal",
+      "title": "SQL_CALC_FOUND_ROWS 不支持",
+      "suggestion": "去掉 SQL_CALC_FOUND_ROWS ...",
+      "rewrite": "移除 SQL_CALC_FOUND_ROWS",
+      "reference": ""
+    }
+  ]
+}
+```
+
+### Excel 输出
+
+```bash
+check_sql ./xmls/ -output excel
+# 生成 check_report_XXX/report.xlsx
+```
+
+Excel 表格中 `suggestion` 拆分为 `category` / `title` / `suggestion` / `rewrite` / `reference` 五列，一条 SQL 有多条建议时展开为多行，便于筛选和排序。首行表头冻结、加粗高亮，单元格自动换行。
+
 ### CSV 输出
 
 ```bash
@@ -187,9 +232,19 @@ GROUP BY sys;
 
 `<where>` / `<set>` / `<if>` / `<choose>` / `<when>` / `<otherwise>` / `<foreach>` / `<trim>` / `<bind>` / `<include>` / `<and>` / `<str>`
 
+### iBATIS 2.x 遗留标签（v1.1.0 起）
+
+兼容老项目常用的 iBATIS 动态写法，条件一律视为 true 展开（与 `<if>` 策略一致），每个展开块恰好产出一个连接词，杜绝 `AND AND` / `WHERE AND` / `in` 后缺括号等畸形 SQL：
+
+- `<dynamic prepend="...">` — 容器；`prepend="WHERE"` 独立充当 WHERE，`prepend="AND"` 接在 `where 1=1` 后
+- 条件标签族（14 个）：`<isNotEmpty>` `<isEmpty>` `<isNotNull>` `<isNull>` `<isEqual>` `<isNotEqual>` `<isGreaterThan>` `<isGreaterEqual>` `<isLessThan>` `<isLessEqual>` `<isPropertyAvailable>` `<isNotPropertyAvailable>` `<isParameterPresent>` `<isNotParameterPresent>`
+- `<iterate open close conjunction>` — 展开为单元素哑值列表（如 `in ('20230302')`），属性为 `conjunction`（非 MyBatis 的 separator）
+
 ### 参数占位符
 
 `#{param}` / `#{param,jdbcType=XXX}` / `${param}` / `#{item.field}` / `#param#` / `'#param#'`
+
+分页位置按上下文类型化：`LIMIT #n#` → `LIMIT 100`、`OFFSET #m#` / `OFFSET #{m}` → `OFFSET 10`、`ROWNUM BETWEEN #a# AND #b#` → `ROWNUM BETWEEN 1 AND 20`、`ROWNUM <= #n#` / `< #n#` → `ROWNUM <= 10`（比较符保留）、`LIMIT #s#,#c#` → `LIMIT 10, 10`、`FETCH FIRST #c# ROW(S) ONLY` → `FETCH FIRST 100 ROWS ONLY`，避免 OFFSET 后跟日期字符串的假报错。
 
 ### 展开策略
 
@@ -198,6 +253,15 @@ GROUP BY sys;
 - `<choose>` → 优先 otherwise，否则第一个 when
 - `<foreach>` → 展开一次哑值迭代
 - `<include>` → 同文件内 `<sql>` 片段内联替换
+
+### `<iterate>` 两种语义（v1.1.0+）
+
+iBATIS `<iterate>` 有两种用法，按 **`open`/`close` 是否成对出现**区分：
+
+| 形态 | 判定 | 展开 |
+|------|------|------|
+| 值列表 | `open="(" close=")"` 成对 | body 是参数列表 → 展开为单元素哑值 `in ('20230302')` |
+| 语句级/批量 | 无 open/close（常 `conjunction=";"`） | body 就是 SQL（set 片段或整条语句）→ 原样保留一次（条件视为 true），参数照常替换，产出单条可 EXPLAIN 的代表 UPDATE，不模拟多语句批 |
 
 ---
 
@@ -262,7 +326,9 @@ cd check_sql_go
 
 # 编译 Linux 静态二进制
 make linux
-# → check_sql (约 5.8 MB, statically linked, stripped)
+# → check_sql (约 8 MB, statically linked, stripped)
+# 版本号通过 -ldflags 注入，默认 v1.0.0，可用 VERSION 覆盖：
+make linux VERSION=v1.1.0
 
 # 本地开发编译
 make build
@@ -272,7 +338,7 @@ make test
 ```
 
 编译要求：
-- Go 1.21+
+- Go 1.24+
 - `CGO_ENABLED=0`（强制纯静态编译）
 - 驱动：`go-sql-driver/mysql`（纯 Go 实现）
 
@@ -334,4 +400,17 @@ systems = [
 ### Q: 改写建议的准确性如何保证？
 
 改写建议基于 39 条规则匹配 SQL 错误码和语法模式。部分建议标注了行为差异（如 NULL 处理、自增 ID 分配等），实际改写时需结合业务逻辑确认。建议始终在测试环境验证改写后的 SQL。
-# tidb_check_sql
+
+---
+
+## 测试现状
+
+当前仓库含 **27 个测试**（`advisor` / `checker` / `parser` / `report` / `sql` 五个包），覆盖 iBATIS 遗留标签解析、`<iterate>` 批量迭代、分页位参数替换，以及 `checker` 的错误消息截断（含多字节边界）等高风险路径。
+
+相对约 3600 行代码，**测试覆盖仍然偏薄**，`checker` 的核心判定路径（EXPLAIN 结果归类、错误码映射）依赖实机 TiDB，尚无单测。按优先级补充：
+
+- **P0 `checker` 剩余纯函数**：错误消息归类与 `truncateErr` 已覆盖；下一步把 EXPLAIN 结果 → matched 状态判定抽成纯函数，用表驱动测试锁住（成本最低、收益最高，因为判对判错都落在这里）
+- **P1 `config`**：TOML 解析的缺省值、非法配置与多系统配置
+- **P2 端到端**：以 `xmls/` 下的真实 mapper 做金标准快照测试；TiDB 连通性需实机环境
+
+> 验证方式：`go build ./... && go vet ./... && go test ./...`（本次在 go1.24.7 上全绿；`go.mod` 声明 `go 1.24.0`，同一 minor 线）。
