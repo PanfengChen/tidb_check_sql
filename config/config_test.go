@@ -268,12 +268,23 @@ func TestExplicitSysNarrowsToDeclaredSystem(t *testing.T) {
 
 	t.Run("sys plus dir and schema merges", func(t *testing.T) {
 		c := newMultiConfig()
-		if err := c.ApplyCLIOverrides("", 0, "", "", "cli_db", "", "order_sys", "./other", ""); err != nil {
+		// Overriding only the schema must leave the declared xml_dir in place;
+		// a rebuild would drop it back to ".".
+		if err := c.ApplyCLIOverrides("", 0, "", "", "cli_db", "", "order_sys", "", ""); err != nil {
 			t.Fatalf("ApplyCLIOverrides returned %v", err)
 		}
-		want := SystemConfig{Name: "order_sys", XMLDir: "./other", Schema: "cli_db"}
+		want := SystemConfig{Name: "order_sys", XMLDir: "./xmls/order", Schema: "cli_db"}
 		if len(c.Systems) != 1 || c.Systems[0] != want {
-			t.Fatalf("systems = %+v, want [%+v]", c.Systems, want)
+			t.Fatalf("systems = %+v, want [%+v] (xml_dir must survive)", c.Systems, want)
+		}
+
+		c2 := newMultiConfig()
+		if err := c2.ApplyCLIOverrides("", 0, "", "", "cli_db", "", "order_sys", "./other", ""); err != nil {
+			t.Fatalf("ApplyCLIOverrides returned %v", err)
+		}
+		want2 := SystemConfig{Name: "order_sys", XMLDir: "./other", Schema: "cli_db"}
+		if len(c2.Systems) != 1 || c2.Systems[0] != want2 {
+			t.Fatalf("systems = %+v, want [%+v]", c2.Systems, want2)
 		}
 	})
 
@@ -340,16 +351,18 @@ func TestPartialFlagsMergeIntoSystem(t *testing.T) {
 			wantName: "order_sys", wantDir: "./other", wantSchema: "order_db",
 		},
 		{
-			name: "sys only keeps dir and schema", sys: "renamed",
-			wantName: "renamed", wantDir: "./xmls/order", wantSchema: "order_db",
+			// Naming the declared system is a no-op on the name and must still
+			// keep the fields the user did not pass.
+			name: "sys matches declared name", sys: "order_sys",
+			wantName: "order_sys", wantDir: "./xmls/order", wantSchema: "order_db",
 		},
 		{
 			name: "schema only keeps name and dir", schema: "other_db",
 			wantName: "order_sys", wantDir: "./xmls/order", wantSchema: "other_db",
 		},
 		{
-			name: "all three override", sys: "s2", dir: "./d2", schema: "db2",
-			wantName: "s2", wantDir: "./d2", wantSchema: "db2",
+			name: "dir and schema with matching sys", sys: "order_sys", dir: "./d2", schema: "db2",
+			wantName: "order_sys", wantDir: "./d2", wantSchema: "db2",
 		},
 	}
 
@@ -424,5 +437,79 @@ func TestNormalizeTableNameEmptySchemaDoesNotProduceLeadingDot(t *testing.T) {
 	}
 	if strings.HasPrefix(c.Database.Table, ".") {
 		t.Fatalf("Table = %q must not start with a dot", c.Database.Table)
+	}
+}
+
+// TestUnknownSysOnSingleSystemIsAnError pins the consistency the multi-system
+// branch already had. Relabelling a declared system to an undeclared name used
+// to succeed silently, which left the result table's sys column disagreeing with
+// the config and made historical rows unfindable.
+func TestUnknownSysOnSingleSystemIsAnError(t *testing.T) {
+	c := &Config{}
+	c.Database.Schema = "test"
+	c.Systems = []SystemConfig{{Name: "order_sys", XMLDir: "./xmls/order", Schema: "order_db"}}
+
+	err := c.ApplyCLIOverrides("", 0, "", "", "", "", "not_declared", "", "")
+	if err == nil {
+		t.Fatal("expected an error for an undeclared -sys on a single-system config")
+	}
+	if c.Systems[0].Name != "order_sys" {
+		t.Fatalf("system name was changed on error: %+v", c.Systems[0])
+	}
+}
+
+// TestRenamePlaceholderSystemIsAllowed: with no config file the system is the
+// synthetic "default" placeholder, so naming it is a legitimate rename rather
+// than a typo.
+func TestRenamePlaceholderSystemIsAllowed(t *testing.T) {
+	c := &Config{}
+	c.Database.Schema = "test"
+	c.Database.Table = "test.all_sqls"
+	c.ApplyDefaults()
+	c.ApplyCLIOverrides("", 0, "", "", "", "", "my_sys", "./xml", "")
+
+	if err := c.ApplyCLIOverrides("", 0, "", "", "", "", "my_sys", "", ""); err != nil {
+		t.Fatalf("naming the placeholder system should work, got %v", err)
+	}
+	if c.Systems[0].Name != "my_sys" {
+		t.Fatalf("system = %+v", c.Systems[0])
+	}
+}
+
+// TestLoadTOMLRejectsDuplicateSystemNames: -sys narrows by name and keeps the
+// first match, so duplicates would silently drop the rest.
+func TestLoadTOMLRejectsDuplicateSystemNames(t *testing.T) {
+	p := writeTemp(t, "dup.toml", `[[check]]
+name = "dup"
+xml_dir = "./a"
+schema = "db_a"
+
+[[check]]
+name = "dup"
+xml_dir = "./b"
+schema = "db_b"
+`)
+	_, err := LoadTOML(p)
+	if err == nil {
+		t.Fatal("expected an error for duplicate system names")
+	}
+	if !strings.Contains(err.Error(), "dup") {
+		t.Fatalf("error should name the duplicated system, got %v", err)
+	}
+}
+
+// TestLoadTOMLRejectsUnnamedSystem: an unnamed [[check]] is almost certainly a
+// typo, and the duplicate-name message would otherwise read "system """.
+func TestLoadTOMLRejectsUnnamedSystem(t *testing.T) {
+	p := writeTemp(t, "noname.toml", `[[check]]
+xml_dir = "./a"
+schema = "db_a"
+`)
+	_, err := LoadTOML(p)
+	if err == nil {
+		t.Fatal("expected an error for a [[check]] without a name")
+	}
+	if !strings.Contains(err.Error(), "no name") {
+		t.Fatalf("error should say the system has no name, got %v", err)
 	}
 }

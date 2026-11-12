@@ -48,6 +48,18 @@ func LoadTOML(path string) (*Config, error) {
 	if err := toml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("cannot parse config file %s: %w", path, err)
 	}
+	// Duplicate names are meaningless and dangerous: -sys narrows by name and
+	// would silently keep the first match, dropping the rest.
+	seen := make(map[string]bool, len(cfg.Systems))
+	for i, s := range cfg.Systems {
+		if s.Name == "" {
+			return nil, fmt.Errorf("config file %s: system #%d has no name; every [[check]] needs one", path, i+1)
+		}
+		if seen[s.Name] {
+			return nil, fmt.Errorf("config file %s declares system %q more than once", path, s.Name)
+		}
+		seen[s.Name] = true
+	}
 	return &cfg, nil
 }
 
@@ -95,7 +107,12 @@ func (c *Config) NormalizeTableName() {
 	}
 }
 
-// CLI overrides: command-line flags take precedence over config file values.
+// ApplyCLIOverrides applies command-line flags on top of the loaded config.
+//
+// Destructive: narrowing trims Systems down to the single system this run will
+// check, so the original list cannot be recovered. Call it once per loaded
+// Config; a second call would treat the already-narrowed list as the full
+// configuration.
 func (c *Config) ApplyCLIOverrides(host string, port int, user, password, schema, table, sys, dir, output string) error {
 	if host != "" {
 		c.Database.Host = host
@@ -145,6 +162,16 @@ func (c *Config) applySystemOverrides(sys, dir, schema string) error {
 		}
 		sc := &c.Systems[0]
 		if sys != "" {
+			// The default "default" system is a placeholder, not something the
+			// user declared, so naming it is a legitimate rename. Any other
+			// mismatch is a typo: the multi-system branch rejects unknown names,
+			// and letting the single-system branch silently relabel would mean
+			// the result table's sys column disagrees with the config history.
+			placeholder := sc.Name == "default" || sc.Name == ""
+			if !placeholder && sc.Name != sys {
+				return fmt.Errorf("system %q is not declared in the config (declared: %s)",
+					sys, sc.Name)
+			}
 			sc.Name = sys
 		}
 		if dir != "" {
